@@ -76,6 +76,14 @@ def clear_engine_cache() -> None:
         p.unlink(missing_ok=True)
 
 
+# 모델 저장소는 **사용자 공용**이다. 작업 폴더 안에 두면 책마다 저장소가
+# 새로 생겨서, `--gguf` 로 한 번 등록해도 다음 책에서는 없는 모델이 된다.
+# 그때 엔진은 영어를 그대로 내놓고 성공을 보고한다. 게다가 6GB 짜리 사본이
+# 책 수만큼 쌓인다. 실측으로 첫 사용자가 정확히 이 함정에 빠졌다.
+MODEL_STORE = Path(
+    os.environ.get("PDFKO_MODELS", Path.home() / ".pdfko" / "ollama"))
+
+
 # 이 프로세스가 띄운 서버들. 어떤 경로로 끝나든 stop_all() 로 정리한다.
 _LIVE: list["Server"] = []
 
@@ -209,7 +217,7 @@ class Server:
         env = {
             "PATH": os.environ["PATH"], "HOME": os.environ["HOME"],
             "OLLAMA_HOST": f"127.0.0.1:{self.op}",
-            "OLLAMA_MODELS": str(self.work / "models" / "ollama"),
+            "OLLAMA_MODELS": str(MODEL_STORE),
             # 슬롯 수는 KV 캐시를 늘려 **레이어를 GPU 밖으로 밀어낼 수 있다.**
             # 8 슬롯이 12GB 카드에서 7B 모델의 전 레이어를 GPU 에 유지하는 값이다.
             # 로그의 `offloaded N/M layers` 가 N==M 인지 반드시 확인할 것.
@@ -229,6 +237,24 @@ class Server:
                 return
             time.sleep(1)
         raise RuntimeError("추론 서버가 뜨지 않았다 (logs/ollama.log 확인)")
+
+    def model_ready(self) -> bool:
+        """이 모델이 추론 서버에 등록돼 있는가.
+
+        없으면 번역 엔진은 **영어 페이지를 그대로 내놓고 종료 코드 0** 을
+        돌려준다. 500쪽이면 서너 시간을 버린 뒤에야 안다. 시작 전에 3초로
+        확인할 수 있는 것을 나중에 비싸게 알아낼 이유가 없다.
+        """
+        import json as _json
+        import urllib.request
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{self.op}/api/tags", timeout=5) as r:
+                names = [m.get("name", "") for m in _json.load(r).get("models", [])]
+        except Exception:
+            return False
+        want = self.model.split(":")[0]
+        return any(n.split(":")[0] == want for n in names)
 
     def start_proxy(self, python: str) -> None:
         if self.proxy_up():
@@ -314,7 +340,7 @@ def ensure_model(work: Path, gguf: Path, tag: str, ollama_port: int) -> None:
     """
     env = dict(os.environ)
     env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
-    env["OLLAMA_MODELS"] = str(work / "models" / "ollama")
+    env["OLLAMA_MODELS"] = str(MODEL_STORE)
     have = subprocess.run(["ollama", "list"], env=env,
                           capture_output=True, text=True).stdout
     if tag in have:

@@ -60,7 +60,7 @@ pdfko book.pdf
 |---|---|---|
 | **그래픽카드** | VRAM 8GB | VRAM **12GB** 이상 |
 | RAM | 16GB | 32GB |
-| 디스크 | 20GB (모델 6GB 포함) | |
+| 디스크 | 25GB (모델 12GB 포함) | |
 | Python | 3.12 이상 | |
 
 번역 모델이 GPU에 통째로 올라가려면 **8.3GB**가 필요합니다. 12GB 카드면 여유 있게 들어가고, 8GB 카드는 일부가 CPU로 밀려 **2~3배 느려집니다**. GPU 없이 CPU만으로는 500쪽에 며칠이 걸려 사실상 어렵습니다.
@@ -69,18 +69,26 @@ pdfko book.pdf
 
 ## 설치
 
-```bash
-# 1. 번역 엔진 (Python 3.12 전용이라 따로 설치합니다)
-uv tool install --python 3.12 babeldoc
+그대로 복사해서 붙여 넣으면 됩니다.
 
-# 2. 추론 서버
+```bash
+# uv — 파이썬 3.12 를 알아서 받아옵니다 (우분투 22.04 에는 3.12 가 없습니다)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 번역 엔진과 모델 내려받기 도구
+uv tool install --python 3.12 babeldoc
+uv tool install huggingface_hub
+
+# 추론 서버
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 3. pdfko
+# pdfko
 git clone https://github.com/juyoung020/pdfko
-cd pdfko && pip install -e .
+cd pdfko
+uv venv --python 3.12
+uv pip install -e .
 
-# 4. 번역 모델 (6GB, 최초 1회만)
+# 번역 모델 (6GB, 최초 1회만)
 hf download tencent/Hy-MT2-7B-GGUF --include "*Q6_K*" --local-dir ~/models
 ```
 
@@ -171,6 +179,8 @@ pdfko book.pdf --make-glossary my.csv          # 번역 없이 후보만 뽑아 
 
 **중간에 끊겨도 괜찮습니다.** 같은 명령을 다시 실행하면 하던 데서 이어갑니다. Ctrl-C, 정전, 컴퓨터 재시작 모두 마찬가지입니다.
 
+**한 번에 하나씩만 돌리세요.** 두 개를 동시에 돌리면 서로의 번역 서버를 빼앗아 결과가 망가질 수 있습니다.
+
 **번역이 안 되는 쪽이 있으면 보고서에 남깁니다.** 작업 폴더의 `품질보고서.md`에 어느 쪽이 왜 문제였는지 적힙니다. 조용히 영어로 바꿔치기하지 않습니다.
 
 **두 번째 실행은 3배 빠릅니다.** 같은 책의 다른 구간을 돌릴 때도, 옵션을 바꿔 다시 돌릴 때도 그렇습니다.
@@ -193,7 +203,13 @@ pdfko book.pdf --make-glossary my.csv          # 번역 없이 후보만 뽑아 
 
 **"스캔본입니다"라고 나올 때** — 그 PDF에는 텍스트가 없고 글자 그림만 있습니다. 이 도구로는 번역할 수 없습니다.
 
-**번역이 영어 그대로일 때** — 추론 서버가 안 떠 있을 수 있습니다. `ollama list`로 모델이 등록됐는지 확인하세요.
+**번역이 영어 그대로일 때** — 모델이 등록되지 않았을 수 있습니다. 이 도구는 자기 서버를 11500 포트에 띄우므로 확인할 때도 포트를 지정해야 합니다.
+
+```bash
+OLLAMA_HOST=127.0.0.1:11500 ollama list
+```
+
+`hy-mt2-7b` 가 안 보이면 `pdfko book.pdf --gguf ~/models/HY-MT2-7B-Q6_K.gguf` 로 한 번 등록하세요. 등록은 한 번이면 되고, 이후 모든 책에서 쓰입니다.
 
 ## 어떻게 만들어졌나
 

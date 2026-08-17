@@ -535,3 +535,50 @@ def test_keep_terms_survives_an_empty_verdict(monkeypatch):
     monkeypatch.setattr(_u, "urlopen", empty)
     rows = [(9, "judicial review"), (8, "due process")]
     assert terms.keep_terms(rows, port=1, model="m") == rows
+
+
+def test_coverage_catches_untranslated_output(tmp_path):
+    """번역이 하나도 안 됐는데 성공으로 보고하던 최악의 실패.
+
+    모델 이름을 잘못 적으면 번역 엔진은 영어 페이지를 그대로 내놓으면서
+    종료 코드 0 을 돌려준다. 실측으로 한글 0자짜리 PDF 가 "파손 0쪽 · 완료"
+    로 나왔다. 500쪽이면 서너 시간을 버린다.
+    """
+    import textwrap
+    import pymupdf
+    from pdfko import qa
+
+    def build(name, body, font):
+        f = tmp_path / name
+        d = pymupdf.open()
+        pg = d.new_page()
+        y = 60
+        for line in textwrap.wrap(body, 40)[:30]:
+            pg.insert_text((50, y), line, fontsize=10, fontname=font)
+            y += 18
+        d.save(f); d.close()
+        return str(f)
+
+    eng = ("The membrane potential changes when an ion channel opens and "
+           "sodium flows inward across the lipid bilayer. ") * 4
+    kor = ("세포막 전위는 이온 통로가 열릴 때 변화하며 나트륨이 지질 이중층을 "
+           "가로질러 안으로 흐른다. ") * 4
+
+    judged, empty = qa.coverage(build("en.pdf", eng, "helv"))
+    assert judged == 1 and empty == [1], (judged, empty)   # 전부 영어 → 잡는다
+
+    judged, empty = qa.coverage(build("ko.pdf", kor, "korea"))
+    assert judged == 1 and empty == [], (judged, empty)    # 한국어 → 통과
+
+
+def test_model_store_is_shared_not_per_workdir():
+    """모델 저장소가 작업 폴더 안에 있으면 `--gguf` 가 책마다 필요해진다.
+
+    그때 엔진은 영어를 그대로 내놓고 성공을 보고하고, 6GB 사본이 책 수만큼
+    쌓인다. 실측으로 첫 사용자가 정확히 이 함정에 빠졌다.
+    """
+    from pathlib import Path
+    from pdfko import runner
+    assert Path.home() in runner.MODEL_STORE.parents
+    for probe in (Path("/tmp/a_ko"), Path("/tmp/b_ko")):
+        assert probe not in runner.MODEL_STORE.parents

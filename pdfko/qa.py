@@ -202,6 +202,34 @@ def mixed_language_figures(trans: pymupdf.Page) -> int:
     return mixed
 
 
+def coverage(trans_pdf: str, floor: float = 0.15) -> tuple[int, list[int]]:
+    """번역이 실제로 일어났는가. (판정한 쪽수, 한글이 거의 없는 쪽 목록)
+
+    이게 없으면 **가장 나쁜 실패가 조용히 성공으로 보고된다.** 모델 이름을
+    잘못 적거나 추론 서버가 죽어 있으면 번역 엔진은 영어 페이지를 그대로
+    내놓으면서 종료 코드 0을 돌려준다. 실측으로 한글 0자짜리 PDF 가
+    "파손 0쪽 · 완료"로 나왔다. 500쪽이면 서너 시간을 버리고, 사용자가
+    열어 보기 전까지 알 수 없다.
+
+    글자가 적은 쪽(그림·수식뿐인 쪽)은 판정하지 않는다.
+    """
+    import pymupdf
+
+    empty: list[int] = []
+    judged = 0
+    with pymupdf.open(trans_pdf) as d:
+        for i in range(d.page_count):
+            t = d[i].get_text()
+            letters = [c for c in t if c.isalpha()]
+            if len(letters) < 50:
+                continue                 # 판정 보류 — 그림·수식뿐인 쪽
+            judged += 1
+            ko = sum(1 for c in letters if "가" <= c <= "힣")
+            if ko / len(letters) < floor:
+                empty.append(i + 1)
+    return judged, empty
+
+
 def scan(orig_pdf: str, trans_pdf: str, offset: int = 0,
          progress=None) -> list[PageVerdict]:
     """번역본 전체를 훑는다.

@@ -370,6 +370,13 @@ def _main(argv: list[str] | None = None) -> int:
         if a.gguf:
             runner.ensure_model(work, a.gguf.resolve(), a.model, srv.op)
             info(f"모델 등록 {a.model}")
+        # 번역을 시작하기 **전에** 모델이 있는지 본다. 없으면 엔진이 영어를
+        # 그대로 내놓고 종료 코드 0 을 돌려준다 — 500쪽이면 서너 시간 뒤에야 안다.
+        if not srv.model_ready():
+            warn(f"모델 '{a.model}' 이 추론 서버에 없습니다.")
+            warn(f"    OLLAMA_HOST=127.0.0.1:{srv.op} ollama list   ← 확인")
+            warn(f"    pdfko {src.name} --gguf <모델.gguf>          ← 최초 1회 등록")
+            return 3
         srv.start_proxy(sys.executable)
         info(f"미들웨어 :{srv.pp}")
         pl = srv.proxy_log_dir()
@@ -428,6 +435,22 @@ def _main(argv: list[str] | None = None) -> int:
                  "먼저 --recheck 없이 한 번 실행할 것")
         return 1
     info(f"{n}쪽 → {out.name}")
+
+    # 번역이 실제로 됐는지부터 본다. 레이아웃 검사는 그다음이다 —
+    # 영어 그대로인 페이지는 레이아웃이 완벽하다.
+    judged, empty = qa.coverage(str(out))
+    if judged and len(empty) == judged:
+        print()
+        warn(f"번역이 하나도 되지 않았습니다 — {judged}쪽 전부 영어입니다.")
+        warn("추론 서버나 모델 이름을 확인하세요:")
+        warn(f"    OLLAMA_HOST=127.0.0.1:{srv.op if not a.recheck else 11500} "
+             f"ollama list")
+        warn(f"결과 파일 {out.name} 은 번역되지 않은 상태입니다.")
+        return 1
+    if empty:
+        warn(f"{len(empty)}/{judged}쪽이 영어로 남았습니다 "
+             f"(예: {', '.join(str(p) for p in empty[:8])}"
+             f"{' …' if len(empty) > 8 else ''}) — 보고서를 확인하세요")
 
     step("레이아웃 파손 검사")
     verdicts = qa.scan(str(src), str(out), offset=offset)
@@ -527,6 +550,10 @@ def _run_pptx(src: Path, a) -> int:
     srv.start_ollama()
     if a.gguf:
         runner.ensure_model(work, a.gguf.resolve(), a.model, srv.op)
+    if not srv.model_ready():
+        warn(f"모델 '{a.model}' 이 추론 서버에 없습니다 "
+             f"(OLLAMA_HOST=127.0.0.1:{srv.op} ollama list 로 확인)")
+        return 3
     srv.start_proxy(sys.executable)
     info(f"미들웨어 :{srv.pp}")
 
