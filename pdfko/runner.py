@@ -265,6 +265,30 @@ class Server:
         want = self.model.split(":")[0]
         return any(n.split(":")[0] == want for n in names)
 
+    def drop_own_proxy(self) -> bool:
+        """이 작업 폴더의 프록시가 떠 있으면 내린다. 우리 것만 건드린다.
+
+        `stop_all()` 은 **이 프로세스가 띄운** 것만 안다. 앞선 실행이
+        SIGKILL·크래시로 죽으면 프록시가 고아로 남는데, 그것이 삭제된 캐시
+        파일의 inode 를 계속 쥐고 있어서 `--fresh` 가 조용히 아무 일도 하지
+        않게 된다. cache_db 가 우리 것일 때만 내린다.
+        """
+        d = self.identify(self.pp)
+        if not d or d.get("cache_db") != str(self.work / "cache" / "trans.db"):
+            return False
+        pid = d.get("pid")
+        if not isinstance(pid, int):
+            return False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False
+        for _ in range(20):
+            if self._port_is_free(self.pp):
+                return True
+            time.sleep(0.5)
+        return True
+
     def start_proxy(self, python: str) -> None:
         if self.proxy_up():
             return                 # 우리 것이고 규칙·작업폴더까지 같다 — 이어 쓴다
@@ -430,6 +454,14 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         return False
     if before.get(f.name, -1) >= f.stat().st_mtime:
         return False                      # 새로 만들어진 파일이 아니다
+    # 파일이 생겼다고 번역이 된 것은 아니다. 상류가 죽어 있으면 프록시가
+    # 원문을 그대로 돌려주고 엔진은 성공한다. 여기서 안 보면 그 구간에
+    # `.done` 이 찍혀 **다시 실행해도 영영 건너뛴다.** 합친 뒤에 알아차려도
+    # 고칠 방법이 `--fresh` 로 전부 다시 돌리는 것뿐이다.
+    from . import qa
+    judged, empty = qa.coverage(str(f))
+    if judged and len(empty) == judged:
+        return False
     chunk.mark_done()
     return True
 

@@ -105,7 +105,8 @@ def test_both_paths_do_the_same_steps():
 
     cli_src = inspect.getsource(cli._main)
     web_src = inspect.getsource(web._run)
-    for step in ("clipscan.scan", "clipscan.clean", "glyphmap.build_table",
+    for step in ("preflight", "clipscan.scan", "clipscan.clean",
+                 "glyphmap.build_table",
                  "clear_engine_cache", "model_ready", "keep_terms", "decide",
                  "plan_chunks", "translate_chunk", "merge", "qa.scan",
                  "coverage", "mixed_language_figures", "repair_pages",

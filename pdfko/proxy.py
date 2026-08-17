@@ -448,7 +448,10 @@ async def health():
     # concise 도 낸다. 복구 중에 프록시가 죽으면 `finally` 의 되돌리기가 실행되지
     # 않아 간결 모드가 켜진 채 남는다. MODE 는 RULES 에 없으므로 다음 실행이
     # 그 프록시를 그대로 이어 쓰면 **책 전체가 간결 모드로 번역된다.**
-    return {"ok": True, "upstream": UPSTREAM, "model": MODEL,
+    # pid 를 낸다. 이게 없으면 "우리 것이고 이 작업 폴더 것"임을 알고도
+    # 내릴 방법이 없어, 고아 프록시가 포트를 영영 쥐고 `--fresh` 를
+    # 무력화한다(삭제된 캐시 파일의 inode 를 계속 들고 있다).
+    return {"ok": True, "upstream": UPSTREAM, "model": MODEL, "pid": os.getpid(),
             "rules": RULES, "log_dir": str(LOG_DIR), "cache_db": str(CACHE_DB),
             "concise": MODE["concise"], "stats": STATS}
 

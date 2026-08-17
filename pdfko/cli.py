@@ -13,7 +13,6 @@ import argparse
 import os
 import re
 import sys
-import time
 from pathlib import Path
 
 from . import clipscan, client, glyphmap, qa, recover, runner
@@ -346,9 +345,8 @@ def _main(argv: list[str] | None = None) -> int:
             # Ctrl-C 뒤 재실행이 정확히 이 상황이다.
             runner.stop_all()
             probe = runner.Server(work, a.model)
-            if probe.identify(probe.pp):
-                info("도는 프록시를 먼저 내립니다 (캐시 파일을 쥐고 있습니다)")
-                time.sleep(2)
+            if probe.drop_own_proxy():
+                info("도는 프록시를 먼저 내렸습니다 (캐시 파일을 쥐고 있었습니다)")
             runner.clear_engine_cache()
             for c in chunks:
                 (c.outdir / ".done").unlink(missing_ok=True)
@@ -436,7 +434,7 @@ def _main(argv: list[str] | None = None) -> int:
         info(f"미들웨어 :{srv.pp}")
         pl = srv.proxy_log_dir()
         if pl and pl.resolve() != (work / "logs").resolve():
-            info(f"  앞선 실행의 프록시를 재사용한다 — 미들웨어 로그는 {pl}")
+            info(f"  앞선 실행의 프록시를 재사용합니다 — 미들웨어 로그는 {pl}")
 
         step("번역")
         for i, c in enumerate(chunks, 1):
@@ -555,6 +553,24 @@ def _run_pptx(src: Path, a) -> int:
 
     work = (a.work or Path.cwd() / f"{src.stem}_ko").expanduser().resolve()
     out = (a.out or work / f"{src.stem}_한국어.pptx").expanduser().resolve()
+    # 원본 위에 쓰면 안 된다. python-pptx 는 패키지를 메모리에 들고 있어서
+    # 조용히 성공하고, 사용자의 원본이 사라진다. PDF 경로는 pymupdf 가
+    # 같은 경로 저장을 거부해서 우연히 안전했을 뿐이다.
+    if out.resolve() == src.resolve():
+        print("결과 경로가 원본과 같습니다 — 원본을 덮어쓰지 않았습니다.")
+        print(f"  다른 이름을 주세요: -o {src.stem}_한국어.pptx")
+        return 2
+    if out.exists() and out.is_dir():
+        print(f"결과 경로가 이미 디렉터리입니다: {out}")
+        return 2
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        _probe = out.parent / f".pdfko_write_test_{os.getpid()}"
+        _probe.touch()
+        _probe.unlink()
+    except OSError as e:
+        print(f"결과를 저장할 수 없는 경로입니다: {out.parent}  ({e.strerror or e})")
+        return 2
     (work / "logs").mkdir(parents=True, exist_ok=True)
 
     step("사전 점검")

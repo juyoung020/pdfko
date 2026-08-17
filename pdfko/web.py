@@ -108,6 +108,18 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
             if first > last:
                 raise ValueError(f"번역할 쪽이 없습니다: {pages} (전체 {total}쪽)")
         offset = first - 1
+        # 스캔본을 걸러낸다. CLI 에만 있고 여기엔 없어서, 화면으로 올린
+        # 사람은 서너 시간을 쓰고 영어 PDF 를 "완료"로 받았다.
+        # qa.coverage 는 글자가 없는 쪽을 판정 보류로 넘기므로 이 그물에
+        # 걸리지 않는다 — 앞에서 막아야 한다.
+        from .cli import preflight as _preflight
+        import io, contextlib
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, _damaged, has_text = _preflight(job.src, first, last)
+        if not has_text:
+            raise RuntimeError(
+                "텍스트 레이어가 거의 없습니다 — 스캔한 PDF 로 보입니다. "
+                "글자가 이미지인 문서는 이 도구로 번역할 수 없습니다.")
         job.say("사전 점검", f"{total}쪽 중 {first}-{last} 번역", 4)
 
         src = job.src
@@ -290,6 +302,7 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
         # part 로그를 열다가 죽는다 — 정상 상태에서 100% 실패했다.
         if work.resolve().parent != ROOT.resolve():
             return JSONResponse({"error": "파일명이 올바르지 않습니다"}, status_code=400)
+        fresh_tree = not work.exists()
         for d in ("parts", "logs", "cache", "work"):
             (work / d).mkdir(parents=True, exist_ok=True)
         # 업로드 파일명은 신뢰할 수 없다. `../../.bashrc` 같은 이름으로
@@ -310,6 +323,8 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
                     f.write(buf)
         except ValueError:
             src.unlink(missing_ok=True)
+            if fresh_tree:
+                shutil.rmtree(work, ignore_errors=True)   # 빈 껍데기를 남기지 않는다
             return JSONResponse(
                 {"error": f"파일이 너무 큽니다 (최대 {MAX_UPLOAD // (1 << 20)}MB)"},
                 status_code=413)
