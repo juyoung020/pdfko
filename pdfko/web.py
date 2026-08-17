@@ -182,6 +182,17 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         out = job.work / f"{job.src.stem}_한국어.pdf"
         n = runner.merge(chunks, out)
 
+        # 번역이 실제로 됐는지부터 본다. 영어 그대로인 페이지는 레이아웃이
+        # 완벽하므로 파손 검사만으로는 절대 걸리지 않는다.
+        judged, empty = qa.coverage(str(out))
+        if judged and len(empty) == judged:
+            raise RuntimeError(
+                f"번역이 하나도 되지 않았습니다 — {judged}쪽 전부 영어입니다. "
+                f"추론 서버와 모델을 확인해 주세요.")
+        if empty:
+            job.log.append(f"{len(empty)}/{judged}쪽이 영어로 남았습니다 "
+                           f"(예: {', '.join(str(p) for p in empty[:8])})")
+
         job.say("파손 검사", f"{n}쪽 확인 중", 92)
         verdicts = qa.scan(str(src), str(out), offset=offset)
         with pymupdf.open(out) as d:
