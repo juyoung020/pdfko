@@ -1,7 +1,7 @@
 [project]
 name = "pdfko"
 version = "0.1.0"
-description = "영문 교재 PDF를 레이아웃 그대로 한국어로 번역한다 (로컬 LLM)"
+description = "영문 교재와 논문을 레이아웃 그대로 한국어로 번역한다 (로컬 LLM, 수식·그림·2단 조판 보존)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

@@ -5,7 +5,7 @@
 ## 왜 필요한가
 
 CLI 는 인자를 외워야 하고, 몇 시간짜리 작업의 진행을 보려면 로그를 따라다녀야
-한다. 교재 한 권을 번역하는 사람에게 그건 과하다.
+한다. 교재 한 권 번역하려는 사람에게 그건 과하다.
 
 ## 설계
 
@@ -299,7 +299,7 @@ async def report():
 
 
 PAGE = """<!doctype html><html lang="ko"><meta charset="utf-8"><link rel="icon" href="data:,">
-<title>pdfko — 영문 교재 한국어 번역</title>
+<title>pdfko — 영문 교재·논문 한국어 번역</title>
 <style>
 :root{--bg:#faf9f7;--fg:#1c1b19;--mut:#6b665e;--line:#e3e0da;--acc:#2f6f4e;--err:#b02a1f;--onacc:#fff}
 @media(prefers-color-scheme:dark){:root{--bg:#171614;--fg:#eceae6;--mut:#9b958a;--line:#302e2a;--acc:#6fbf92;--err:#ff9c8f;--onacc:#0f2419}}
@@ -338,7 +338,7 @@ pre{background:color-mix(in srgb,var(--fg) 5%,transparent);border-radius:10px;pa
 .hide{display:none}
 </style>
 <div class="wrap">
-<h1>영문 교재를 한국어로</h1>
+<h1>영문 교재와 논문을 한국어로</h1>
 <p class="sub">레이아웃·수식·그림을 그대로 두고 글자만 번역합니다. 전부 이 컴퓨터에서 처리됩니다.</p>
 
 <div class="card" id="setup">

@@ -1,4 +1,4 @@
-"""pdfko — 영문 교재 PDF를 한국어로, 레이아웃을 유지한 채 번역한다.
+"""pdfko — 영문 교재와 논문을 한국어로, 레이아웃을 유지한 채 번역한다.
 
     pdfko book.pdf
 
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 def _main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="pdfko",
-        description="영문 교재 PDF를 레이아웃 그대로 한국어로 번역한다.")
+        description="영문 교재와 논문을 레이아웃 그대로 한국어로 번역한다.")
     p.add_argument("pdf", type=Path, help="번역할 PDF 또는 PPTX")
     p.add_argument("-o", "--out", type=Path, help="결과 PDF 경로")
     p.add_argument("-w", "--work", type=Path, help="작업 디렉터리 (기본: ./<이름>_ko)")
