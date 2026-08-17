@@ -309,19 +309,21 @@ def _main(argv: list[str] | None = None) -> int:
         # 번역이 끝나면 그 자리에 원래 글리프(`↵`)를 도로 그려 넣는다. 한국어
         # 본문 한가운데 `↵` 가 박히는 이유다. 사전이 있으면 프록시가 번역 전에
         # 자리표시자를 녹여 `different` 로 되돌린다.
-        if damaged:
+        # `damaged` 판정에 걸지 않는다. `looks_damaged` 는 표본에서 20개
+        # 넘게 나와야 참인데, 몇 쪽만 돌리면 그 문턱에 못 미친다. 실측으로
+        # `-p 155` 한 장 번역에서 사전이 안 만들어져 `↵` 6개가 그대로 나왔다.
+        # 사전 만들기는 텍스트 한 번 훑는 비용뿐이고, 찾은 게 없으면 빈 사전이다.
+        # 구간이 아니라 **문서 전체**에서 만든다. 같은 합자 낱말이 책 곳곳에
+        # 나오므로 표본이 넓을수록 잘 잡힌다. 실측: 155쪽 한 장에서 1쌍,
+        # 548쪽 전체에서 91쌍이고 비용은 1.4초뿐이다.
+        srv_glyphmap = None
+        gm = glyphmap.build_table(src)
+        if gm:
             step("합자 사전")
-            gm = glyphmap.build_table(src, first, last)
-            if gm:
-                gm_path = work / "glyphmap.json"
-                glyphmap.save(gm, gm_path)
-                srv_glyphmap = gm_path
-                info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
-            else:
-                srv_glyphmap = None
-                info("원본에서 합자 손상을 찾지 못했다 — 사전 없이 진행한다")
-        else:
-            srv_glyphmap = None
+            gm_path = work / "glyphmap.json"
+            glyphmap.save(gm, gm_path)
+            srv_glyphmap = gm_path
+            info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
 
         step("서버 기동")
         srv = runner.Server(work, a.model)

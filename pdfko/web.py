@@ -72,7 +72,6 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------- 작업 실행
 def _run(job: Job, pages: str, glossary: Path | None) -> None:
     from . import clipscan, glyphmap, qa, recover, runner
-    from .repair import looks_damaged
     import pymupdf
 
     try:
@@ -113,22 +112,15 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         # CLI 에만 있고 웹에는 없었다 — 같은 문서를 CLI 로 돌리면 0개,
         # 웹으로 돌리면 6개가 나왔다. 화면의 끌어다 놓기가 더 나쁜 결과를
         # 내놓고 있었던 셈이다.
-        # 표본은 번역할 구간에서 뽑는다. 앞 40쪽만 보면 서지 정보가 멀쩡한
-        # 책은 본문이 깨져 있어도 사전 없이 진행한다.
-        with pymupdf.open(src) as d:
-            sample = "".join(d[i].get_text()
-                             for i in range(first - 1, min(last, first + 39)))
-        if looks_damaged(sample):
-            job.say("사전 점검", "손상된 합자를 찾는 중", 9)
-            gm = glyphmap.build_table(src, first, last)
-            if gm:
-                gm_path = job.work / "glyphmap.json"
-                glyphmap.save(gm, gm_path)
-                job.log.append(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
-            else:
-                gm_path = None
-        else:
-            gm_path = None
+        # 손상 판정에 걸지 않고 항상 만든다. 표본 임계값에 못 미치는 짧은
+        # 구간에서 사전이 빠져 `↵` 가 그대로 나오는 일이 있었다.
+        job.say("사전 점검", "손상된 합자를 찾는 중", 9)
+        gm_path = None
+        gm = glyphmap.build_table(src)   # 구간이 아니라 문서 전체에서
+        if gm:
+            gm_path = job.work / "glyphmap.json"
+            glyphmap.save(gm, gm_path)
+            job.log.append(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
 
         job.say("서버 기동", "추론 서버를 켜는 중", 10)
         srv = runner.Server(job.work, "hy-mt2-7b")
