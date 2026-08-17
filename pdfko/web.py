@@ -71,7 +71,7 @@ _lock = threading.Lock()
 
 # ---------------------------------------------------------------- 작업 실행
 def _run(job: Job, pages: str, glossary: Path | None) -> None:
-    from . import clipscan, glyphmap, qa, recover, runner
+    from . import clipscan, glyphmap, qa, recover, runner, terms
     import pymupdf
 
     try:
@@ -133,6 +133,23 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         # 실측: 작업 폴더를 지우고 같은 파일을 다시 올렸더니 미들웨어 호출
         # 0회로 22초 만에 "완료"됐다. CLI 는 지우는데 여기만 빠져 있었다.
         runner.clear_engine_cache()
+
+        # 용어 통일. CLI 에만 넣고 여기를 또 빠뜨렸다 — 엔진 캐시, 합자 사전에
+        # 이어 세 번째다. 같은 문서를 CLI 로 돌리면 용어가 고정되고 웹으로
+        # 돌리면 안 되는, 사용자가 알 길 없는 차이가 생긴다.
+        if not glossary:
+            job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
+            cand = terms.extract(src, first, last)
+            cand = terms.keep_terms(cand, port=srv.op, model="hy-mt2-7b")
+            picked = terms.decide(cand, port=srv.pp, model="hy-mt2-7b")
+            if picked:
+                gpath = job.work / "용어집.csv"
+                terms.write_csv(gpath, cand, picked)
+                glossary = gpath
+                srv.user_sig = runner.Server.signature(gpath)
+                job.log.append(f"{len(picked)}개 용어의 역어를 고정했다: "
+                               + ", ".join(f"{k}→{v}"
+                                           for k, v in list(picked.items())[:5]))
 
         chunks = runner.plan_chunks(first, last, 40, job.work)
         if not chunks:
