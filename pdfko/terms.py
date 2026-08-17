@@ -180,12 +180,20 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
     kept: list[tuple[int, str]] = []
     for i in range(0, len(rows), batch):
         chunk = rows[i:i + batch]
+        # **항목별로** 묻는다. "골라서 배열로 돌려달라"고 하면 어떤 분야에서는
+        # 모델이 통째로 `[]` 를 뱉는다 — 실측으로 헌법학 용어 12개(judicial
+        # review, due process …)에 5회 연속 빈 배열이었고, 같은 형식으로 물리
+        # 용어 12개는 12개 전부 살렸다. 그러면 아래 폴백이 잡음까지 통과시켜
+        # 법학 교재만 용어집이 오염된다.
+        #
+        # 항목마다 참/거짓을 답하게 하면 같은 모델이 같은 목록을 정확히
+        # 분류한다. 고를 것을 고르는 것보다 하나씩 판정하는 쪽이 쉽다.
         prompt = (
-            "Below is a list of phrases taken from a textbook. Keep only the ones "
-            "that are technical terms of the book's subject. Drop ordinary English "
-            "words. Also drop entries containing misspelled, truncated, or "
-            "non-English word fragments.\n"
-            "Answer with a JSON array of the kept phrases only. No explanation.\n\n"
+            "For each phrase below, answer whether it is a domain-specific "
+            "technical term (true) or an ordinary English phrase, a bibliography "
+            "artifact, or a misspelled/truncated fragment (false).\n"
+            "Answer with a JSON object mapping every phrase to true or false. "
+            "Include every phrase. No explanation.\n\n"
             + json.dumps([t for _, t in chunk], ensure_ascii=False))
         try:
             req = urllib.request.Request(
@@ -196,8 +204,15 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=300) as r:
                 raw = json.load(r)["choices"][0]["message"]["content"]
-            s, e = raw.find("["), raw.rfind("]")
-            picked = {str(x).strip().lower() for x in json.loads(raw[s:e + 1])}
+            s, e = raw.find("{"), raw.rfind("}")
+            verdict = json.loads(raw[s:e + 1])
+            if not isinstance(verdict, dict) or not verdict:
+                raise ValueError("empty verdict")
+            # 답이 없는 항목은 살린다. 모델이 빠뜨렸다고 용어를 잃으면 안 된다.
+            picked = {str(k).strip().lower()
+                      for k, v in verdict.items() if v is not False}
+            picked |= {t for _, t in chunk if t not in
+                       {str(k).strip().lower() for k in verdict}}
         except Exception:
             kept += chunk            # 판단하지 못하면 통째로 살린다
             continue

@@ -421,7 +421,12 @@ def test_stoplist_has_no_content_words():
 
 
 def test_keep_terms_drops_common_words(monkeypatch):
-    """무엇이 용어인지는 목록이 아니라 모델이 고른다."""
+    """무엇이 용어인지는 목록이 아니라 모델이 고른다.
+
+    형식은 **항목별 참/거짓**이다. "골라서 배열로 돌려달라"고 하면 어떤
+    분야에서는 모델이 통째로 `[]` 를 뱉는다 — 실측으로 헌법학 용어에
+    5회 연속 빈 배열이었고, 그러면 폴백이 잡음까지 전부 통과시킨다.
+    """
     import json
     from pdfko import terms
 
@@ -434,9 +439,9 @@ def test_keep_terms_drops_common_words(monkeypatch):
     def fake_urlopen(req, timeout=0):
         sent = json.loads(req.data)["messages"][0]["content"]
         cands = json.loads(sent[sent.find("["):])
-        keep = [c for c in cands if " " in c or "-" in c]      # 모델이 구만 남겼다 치자
+        verdict = {c: (" " in c or "-" in c) for c in cands}    # 구만 용어라 치자
         return _Resp(json.dumps(
-            {"choices": [{"message": {"content": json.dumps(keep)}}]}).encode())
+            {"choices": [{"message": {"content": json.dumps(verdict)}}]}).encode())
 
     # terms 는 함수 안에서 urllib 를 임포트하므로 전역 urlopen 을 갈아끼운다
     import urllib.request as _u
@@ -505,3 +510,28 @@ def test_system_prompt_names_no_subject_area():
     for field in ("machine-learning", "machine learning", "reinforcement",
                   "biology", "chemistry", "physics", "law", "medicine"):
         assert field not in low, field
+
+
+def test_keep_terms_survives_an_empty_verdict(monkeypatch):
+    """모델이 빈 답을 주면 후보를 통째로 살린다.
+
+    실측으로 헌법학 용어에 `[]` 가 5회 연속 나왔다. 그때 아무것도 안 남기면
+    그 분야만 용어 통일이 통째로 사라진다. 용어를 잃는 쪽이 더 비싸다.
+    """
+    import json
+    from pdfko import terms
+    import urllib.request as _u
+
+    class _Resp:
+        def __init__(self, b): self._b = b
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def empty(req, timeout=0):
+        return _Resp(json.dumps(
+            {"choices": [{"message": {"content": "{}"}}]}).encode())
+
+    monkeypatch.setattr(_u, "urlopen", empty)
+    rows = [(9, "judicial review"), (8, "due process")]
+    assert terms.keep_terms(rows, port=1, model="m") == rows

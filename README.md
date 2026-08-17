@@ -1,12 +1,14 @@
 # pdfko
 
-**영문 교재 PDF를 레이아웃 그대로 한국어로 번역합니다.** 수식·그림·표는 원본 그대로 남고, 쪽번호도 원본과 같습니다. 전부 내 컴퓨터에서 돌아가고 API 요금이 들지 않습니다.
+**영문 교재·논문 PDF를 레이아웃 그대로 한국어로 번역합니다.** 수식·그림·표는 원본 그대로 남고, 쪽번호도 원본과 같습니다. 전부 내 컴퓨터에서 돌아가고 API 요금이 들지 않습니다.
 
 ```bash
 pdfko book.pdf
 ```
 
 ## 결과물
+
+### 교재
 
 강화학습 교재 *Reinforcement Learning: An Introduction* (Sutton & Barto, 548쪽)을 번역한 실제 페이지입니다.
 
@@ -17,6 +19,22 @@ pdfko book.pdf
 **그림과 예제 상자가 있는 쪽** — 그림, 배치, 색 상자가 그대로 유지됩니다
 
 ![그림 페이지 번역 전후](docs/images/before-after-figure.png)
+
+### 논문
+
+교재만 되는 게 아닙니다. arXiv 물리 논문(연성물질)을 그대로 넣은 결과입니다. **2단 조판과 수식 번호가 유지됩니다.**
+
+![논문 번역 전후](docs/images/before-after-paper.png)
+
+분야도 가리지 않습니다. 신경과학·연성물질·정수론·경제학·천체물리 논문으로 확인했습니다.
+
+| 분야 | 도구가 찾아낸 용어 |
+|---|---|
+| 천체물리 | rest-frame · systemic redshift · covering factor |
+| 연성물질 | volume fraction · zeeman energy · magnetoactive elastomer |
+| 경제학 | standard error · fixed effect · difference-in-difference |
+| 정수론 | fixed point · hyperbolic component · compressive domain |
+| 신경과학 | functional connectivity · persistent homology · brain network |
 
 ## 왜 만들었나
 
