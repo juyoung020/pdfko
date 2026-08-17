@@ -37,22 +37,25 @@ from pathlib import Path
 
 from .repair import repair
 
-# 어느 분야에서든 용어가 아닌 낱말. 분야 어휘가 아니라 **기능어와 서술어**다.
+# **영어 문법의 닫힌 낱말 부류만** 넣는다 — 관사·전치사·대명사·접속사·조동사.
+# 어느 분야에서도 전문 용어가 될 수 없는 낱말들이고, 이건 분야에 대한 지식이
+# 아니라 영어라는 언어에 대한 사실이다.
+#
+# 내용어는 **한 개도** 넣지 않는다. 한때 잡음을 줄이려고 `learning`, `method`,
+# `system` 을 넣었다가 곧바로 이 도구를 강화학습 전용으로 만들 뻔했다.
+# 머신러닝 교재에서 `learning` 은 막아야 할 잡음이 아니라 가장 중요한 용어다.
+# 분야를 모르는 도구가 어떤 낱말이 그 분야의 용어인지 미리 정할 수는 없다.
+#
+# 내용어를 거르는 일은 목록이 아니라 **모델**이 한다(`keep_terms`).
 STOP = set("""
-the a an and or but if then than that this these those of in on at to for with from by as is are
-was were be been being it its they them their we our you your he she his her not no can may might
-will would shall should must do does did have has had there here when where which who whom what
-how why all any both each few more most other some such only own same so too very just one two
-three four five first second third also into over under between about following above below thus
-however therefore hence while since although though because case possible many given used see let
-now consider suppose called shown means example examples figure chapter section exercise equation
-table page part appendix note notes eqs eqs like well make makes made take takes taken good better
-best large small later often always never every another using based upon within without
-after right general point complete single solution again still even much less able need result
-results section sections show shows shown described discussion introduction summary
-different learn learns learned learning method methods approach approaches system systems problem
-problems idea ideas thing things way ways form forms type types kind number numbers
-""".split())
+the a an and or but if then than that this these those of in on at to for with from by as
+is are was were be been being am it its they them their we us our you your he him his she her
+not no nor can could may might will would shall should must do does did done have has had
+there here when where which who whom whose what how why all any both each either neither
+few more most other others some such only own same so too very just about above below under
+over between into onto through during before after since until while although though because
+however therefore hence thus also again still even yet than upon within without across among
+per via one two three four five first second third next last another every each""".split())
 
 _WORD = re.compile(r"[^A-Za-z\- ]+")
 
@@ -98,16 +101,25 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
                   if "-" in w and 6 < len(w) < 30 and w.strip("-").replace("-", "").isalpha())
     uni = Counter(_norm(w) for w in words if len(w) > 4 and w not in STOP and w.isalpha())
 
-    cand = [(n, t) for t, n in bi.most_common(top * 2) if n >= min_count]
-    cand += [(n, t) for t, n in hyp.most_common(top) if n >= min_count]
+    # **구를 단일어보다 앞에 둔다.** 어휘 목록으로 거르는 대신 순서로 푼다.
+    # 빈도만으로 줄을 세우면 `after`, `better` 같은 흔한 낱말이 `value function`
+    # 앞에 온다. 그렇다고 그런 낱말을 목록에 박으면 분야 도구가 된다 —
+    # 한때 `learning` 을 막아 놨는데, 머신러닝 교재에서는 그게 핵심 용어다.
+    #
+    # 두 낱말 구와 하이픈 낱말은 전문 용어일 확률이 훨씬 높다. 이건 분야가
+    # 아니라 **형태**에 대한 사실이라 어느 문서에나 통한다.
+    strong = [(n, t) for t, n in bi.most_common(top * 2) if n >= min_count]
+    strong += [(n, t) for t, n in hyp.most_common(top) if n >= min_count]
+    strong.sort(key=lambda x: -x[0])
     # 구에 이미 들어 있는 낱말은 단일어로 또 넣지 않는다
-    inside = {w for _, p in cand for w in p.replace("-", " ").split()}
-    cand += [(n, t) for t, n in uni.most_common(top * 4)
-             if n >= min_count and _norm(t) in {_norm(x) for x in italic}
-             and t not in inside][:top // 2]
+    inside = {w for _, p in strong for w in p.replace("-", " ").split()}
+    weak = sorted(((n, t) for t, n in uni.most_common(top * 4)
+                   if n >= min_count and _norm(t) in {_norm(x) for x in italic}
+                   and t not in inside), key=lambda x: -x[0])
+    cand = strong + weak
 
     seen, out = set(), []
-    for n, t in sorted(cand, key=lambda x: -x[0]):
+    for n, t in cand:
         t = t.strip().strip("-").strip()
         # 앞뒤 하이픈은 그리스 문자가 떨어져 나간 흔적이다(`ε-greedy` → `-greedy`).
         # 텍스트 레이어가 깨진 PDF 에서 흔하다.
@@ -118,12 +130,98 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
     return out[:top]
 
 
-def write_csv(path: Path, rows: list[tuple[int, str]]) -> None:
+def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
+               batch: int = 30) -> list[tuple[int, str]]:
+    """후보 중 **전문 용어만** 모델에게 고르게 한다.
+
+    통계는 "자주 나오는 말"까지만 알려 준다. 그중 무엇이 그 분야의 용어인지는
+    분야를 아는 쪽이 판단해야 하고, 그건 낱말 목록이 아니라 모델이다.
+    목록으로 거르면 그 순간 분야 전용 도구가 된다.
+
+    모델이 답을 못 하면 후보를 그대로 쓴다. 잡음이 섞여도 역어가 하나로
+    고정될 뿐이라 해롭지 않다 — 진짜 용어를 잃는 쪽이 훨씬 비싸다.
+
+    `port` 는 **추론 서버(ollama)** 다. 미들웨어 프록시로 보내면 안 된다 —
+    프록시는 모든 요청을 번역으로 보고 번역가 지시문을 붙이므로, 모델이
+    "용어를 골라라"가 아니라 "이 목록을 한국어로 옮겨라"로 받아들인다.
+    실측으로 프록시를 거치니 잡음 9개 중 0개가 걸러졌다.
+    """
+    import json
+    import urllib.request
+
+    kept: list[tuple[int, str]] = []
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        prompt = (
+            "Below is a list of phrases taken from a textbook. Keep only the ones "
+            "that are technical terms of the book's subject. Drop ordinary English "
+            "words. Also drop entries containing misspelled, truncated, or "
+            "non-English word fragments.\n"
+            "Answer with a JSON array of the kept phrases only. No explanation.\n\n"
+            + json.dumps([t for _, t in chunk], ensure_ascii=False))
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/v1/chat/completions",
+                data=json.dumps({"model": model, "temperature": 0.0,
+                                 "max_tokens": 800,
+                                 "messages": [{"role": "user", "content": prompt}]}).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                raw = json.load(r)["choices"][0]["message"]["content"]
+            s, e = raw.find("["), raw.rfind("]")
+            picked = {str(x).strip().lower() for x in json.loads(raw[s:e + 1])}
+        except Exception:
+            kept += chunk            # 판단하지 못하면 통째로 살린다
+            continue
+        # **원문과 정확히 일치하는 것만** 남긴다. 손상된 항목에 대해 모델은
+        # 버리는 대신 고쳐서 돌려주는 일이 있는데(`nite-horizon` → `finite
+        # horizon`), 그 교정본은 실제 문서에 없는 문자열이라 용어집에 넣으면
+        # 아무 데도 걸리지 않는다. 일치하지 않으면 자동으로 빠지는 셈이라
+        # 손상 항목 제거가 공짜로 따라온다 — 실측 5개 중 5개.
+        got = [(n, t) for n, t in chunk if t in picked]
+        kept += got if got else chunk
+    return kept
+
+
+def decide(rows: list[tuple[int, str]], *, port: int, model: str,
+           batch: int = 20) -> dict[str, str]:
+    """뽑은 용어의 역어를 **한 번만** 정한다. {영어: 한국어}
+
+    이게 자동 용어 통일의 핵심이다. 사람이 CSV 를 채우게 하면 원클릭이 아니다.
+    도구가 먼저 정하고 문서 끝까지 그 역어를 지키면, 사람이 손대지 않아도
+    `가치 함수`가 중간에 `값 함수`로 바뀌는 일이 없어진다.
+
+    **어느 역어가 옳은지**를 도구가 판단하는 게 아니다. 무엇을 고르든 한 번만
+    고르는 것이 목적이다. 취향이 다르면 `--glossary` 로 덮어쓰면 된다.
+    """
+    from .client import translate_batch
+    from .repair import hangul_ratio
+
+    picked: dict[str, str] = {}
+    for i in range(0, len(rows), batch):
+        chunk = [t for _, t in rows[i:i + batch]]
+        got = translate_batch([{"id": j, "input": t} for j, t in enumerate(chunk)],
+                              port=port, model=model)
+        for j, en in enumerate(chunk):
+            ko = (got.get(j) or "").strip()
+            # 용어 역어로 쓸 수 있는 값인지 본다. 짧은 명사구여야 하고,
+            # 한글이 있어야 하며, 문장이 되어 돌아오면 안 된다.
+            if not ko or hangul_ratio(ko) < 0.5:
+                continue
+            if len(ko) > max(24, len(en)) or "\n" in ko or ko.endswith(("다.", "다")):
+                continue
+            picked[en] = ko
+    return picked
+
+
+def write_csv(path: Path, rows: list[tuple[int, str]],
+              targets: dict[str, str] | None = None) -> None:
     """번역어 칸을 비운 채로 저장한다. 사용자가 채워 넣으면 그대로 쓸 수 있다.
 
     주석이나 여분 칸을 넣지 않는다. 이 파일은 그대로 `--glossary` 로 되돌아와
     번역 엔진의 CSV 파서를 통과해야 한다. 빈도는 줄 순서로 이미 드러난다.
     """
+    tg = targets or {}
     lines = ["source,target,tgt_lng"]
-    lines += [f"{t},," for _, t in rows]
+    lines += [f"{t},{tg.get(t, '')}," for _, t in rows]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

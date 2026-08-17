@@ -135,6 +135,8 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="hy-mt2-7b", help="ollama 모델 태그")
     p.add_argument("--gguf", type=Path, help="등록할 GGUF 파일 (최초 1회)")
     p.add_argument("--glossary", type=Path, help="용어집 CSV (source,target)")
+    p.add_argument("--no-glossary", action="store_true",
+                   help="용어 자동 통일을 끈다 (기본은 켜짐)")
     p.add_argument("--make-glossary", type=Path, nargs="?", const=Path("glossary.csv"),
                    metavar="CSV",
                    help="이 문서에서 용어 후보를 뽑아 CSV 로 저장하고 끝낸다 "
@@ -184,6 +186,7 @@ def _main(argv: list[str] | None = None) -> int:
                                   ("--glossary", a.glossary), ("--prompt", a.prompt),
                                   ("--recheck", a.recheck), ("--fresh", a.fresh),
                                   ("--make-glossary", a.make_glossary),
+                                  ("--no-glossary", a.no_glossary),
                                   ("--no-recover", a.no_recover)) if v]
         if ignored:
             print("PPTX 에서는 쓸 수 없는 옵션입니다: " + ", ".join(ignored))
@@ -350,6 +353,12 @@ def _main(argv: list[str] | None = None) -> int:
             srv_glyphmap = gm_path
             info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
 
+        # 용어 후보는 서버 기동 전에 뽑아 둔다(추론이 필요 없는 단계).
+        auto_terms = []
+        if not a.glossary and not a.no_glossary:
+            from . import terms as _terms
+            auto_terms = _terms.extract(src, first, last)
+
         step("서버 기동")
         srv = runner.Server(work, a.model)
         srv.glyphmap = srv_glyphmap
@@ -367,6 +376,32 @@ def _main(argv: list[str] | None = None) -> int:
         if pl and pl.resolve() != (work / "logs").resolve():
             info(f"  앞선 실행의 프록시를 재사용한다 — 미들웨어 로그는 {pl}")
 
+        # 용어 통일: 자주 나오는 용어의 역어를 **먼저 한 번 정해** 두고
+        # 문서 끝까지 그걸 쓴다. 이걸 안 하면 같은 `value function` 이
+        # 앞에서는 '가치 함수', 뒤에서는 '값 함수'가 된다. 교재에서는
+        # 그 흔들림이 그대로 공부 방해가 된다.
+        glossary = a.glossary
+        if auto_terms:
+            step("용어 통일")
+            from . import terms as _terms
+            # 무엇이 이 분야의 용어인지는 모델이 고른다. 낱말 목록으로 거르면
+            # 그 순간 분야 전용 도구가 된다.
+            # 선별은 번역이 아니므로 **추론 서버에 직접**(srv.op) 묻는다.
+            # 프록시로 보내면 번역가 지시문이 붙어 "골라라"가 "옮겨라"가 된다.
+            auto_terms = _terms.keep_terms(auto_terms, port=srv.op, model=a.model)
+            picked = _terms.decide(auto_terms, port=srv.pp, model=a.model)
+            if picked:
+                gpath = work / "용어집.csv"
+                _terms.write_csv(gpath, auto_terms, picked)
+                glossary = gpath
+                info(f"{len(picked)}개 용어의 역어를 고정했다 → {gpath.name}")
+                for en, ko in list(picked.items())[:5]:
+                    info(f"    {en} → {ko}")
+                if len(picked) > 5:
+                    info(f"    … 외 {len(picked) - 5}개")
+            else:
+                warn("용어 역어를 정하지 못했다 — 용어집 없이 진행한다")
+
         step("번역")
         for i, c in enumerate(chunks, 1):
             if c.done:
@@ -375,7 +410,7 @@ def _main(argv: list[str] | None = None) -> int:
             info(f"[{i}/{len(chunks)}] {c.name} …")
             ok = runner.translate_chunk(
                 c, src, work, model=a.model, proxy_port=srv.pp,
-                glossary=a.glossary, prompt_file=a.prompt)
+                glossary=glossary, prompt_file=a.prompt)
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 확인. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어간다.")
@@ -420,7 +455,7 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 recs = recover.repair_pages(
                     out, src, severe, offset, src, work,
-                    model=a.model, proxy_port=srv.pp, glossary=a.glossary,
+                    model=a.model, proxy_port=srv.pp, glossary=glossary,
                     on_step=lambda p, what: info(
                         f"  {p}쪽 {what}" if p else f"  {what}"))
             again = sum(1 for r in recs if r.action == "retranslated")

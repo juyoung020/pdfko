@@ -383,3 +383,72 @@ def test_generated_glossary_is_parseable(tmp_path):
     rows = list(csv.DictReader(out.read_text(encoding="utf-8").splitlines()))
     assert [r["source"] for r in rows] == ["value function", "off-policy"]
     assert all(r["target"] == "" for r in rows)      # 사용자가 채울 자리
+
+
+def test_decide_rejects_bad_term_translations(monkeypatch):
+    """역어로 쓸 수 없는 응답은 버린다. 문장이 통째로 오면 용어집이 망가진다."""
+    from pdfko import terms
+    fake = {0: "가치 함수",          # 정상
+            1: "value function",     # 영어 반향
+            2: "이 용어는 정책을 뜻한다.",   # 문장으로 돌아옴
+            3: "",                   # 빈 응답
+            4: "정책"}               # 정상
+    monkeypatch.setattr(terms, "translate_batch", lambda *a, **k: fake, raising=False)
+    import pdfko.client as _c
+    monkeypatch.setattr(_c, "translate_batch", lambda *a, **k: fake)
+    got = terms.decide([(9, "value function"), (8, "echo"), (7, "sentence"),
+                        (6, "empty"), (5, "policy")], port=1, model="m")
+    assert got == {"value function": "가치 함수", "policy": "정책"}
+
+
+def test_stoplist_has_no_content_words():
+    """STOP 은 영어 기능어만 담는다. 내용어가 하나라도 들어가면 분야 도구가 된다.
+
+    한때 잡음을 줄이려고 `learning`, `method`, `system` 을 넣었다. 머신러닝
+    교재에서 `learning` 은 막아야 할 잡음이 아니라 가장 중요한 용어다.
+    """
+    from pdfko.terms import STOP
+    content = {"learning", "learn", "method", "system", "problem", "model", "policy",
+               "reward", "agent", "state", "value", "action", "function", "network",
+               "cell", "gradient", "error", "signal", "control", "search", "solution",
+               "energy", "force", "market", "gene", "protein", "algorithm"}
+    assert not (STOP & content), STOP & content
+
+
+def test_keep_terms_drops_common_words(monkeypatch):
+    """무엇이 용어인지는 목록이 아니라 모델이 고른다."""
+    import json
+    from pdfko import terms
+
+    class _Resp:
+        def __init__(self, body): self._b = body
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=0):
+        sent = json.loads(req.data)["messages"][0]["content"]
+        cands = json.loads(sent[sent.find("["):])
+        keep = [c for c in cands if " " in c or "-" in c]      # 모델이 구만 남겼다 치자
+        return _Resp(json.dumps(
+            {"choices": [{"message": {"content": json.dumps(keep)}}]}).encode())
+
+    # terms 는 함수 안에서 urllib 를 임포트하므로 전역 urlopen 을 갈아끼운다
+    import urllib.request as _u
+    monkeypatch.setattr(_u, "urlopen", fake_urlopen)
+    rows = [(9, "value function"), (8, "after"), (7, "off-policy"), (6, "better")]
+    got = [t for _, t in terms.keep_terms(rows, port=1, model="m")]
+    assert got == ["value function", "off-policy"]
+
+
+def test_keep_terms_survives_a_dead_model(monkeypatch):
+    """모델이 답을 못 하면 후보를 통째로 살린다. 용어를 잃는 쪽이 더 비싸다."""
+    from pdfko import terms
+    import urllib.request as _u
+
+    def boom(*a, **k):
+        raise OSError("upstream down")
+
+    monkeypatch.setattr(_u, "urlopen", boom)
+    rows = [(9, "value function"), (8, "after")]
+    assert terms.keep_terms(rows, port=1, model="m") == rows
