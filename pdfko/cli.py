@@ -135,6 +135,10 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="hy-mt2-7b", help="ollama 모델 태그")
     p.add_argument("--gguf", type=Path, help="등록할 GGUF 파일 (최초 1회)")
     p.add_argument("--glossary", type=Path, help="용어집 CSV (source,target)")
+    p.add_argument("--make-glossary", type=Path, nargs="?", const=Path("glossary.csv"),
+                   metavar="CSV",
+                   help="이 문서에서 용어 후보를 뽑아 CSV 로 저장하고 끝낸다 "
+                        "(번역어 칸은 비어 있으니 채워서 --glossary 로 쓰면 된다)")
     p.add_argument("--prompt", type=Path, help="추가 번역 지시문 파일")
     p.add_argument("--no-recover", action="store_true",
                    help="파손 페이지를 원문으로 되돌리지 않는다")
@@ -179,6 +183,7 @@ def _main(argv: list[str] | None = None) -> int:
         ignored = [n for n, v in (("--pages", a.pages), ("--chunk", a.chunk != 40),
                                   ("--glossary", a.glossary), ("--prompt", a.prompt),
                                   ("--recheck", a.recheck), ("--fresh", a.fresh),
+                                  ("--make-glossary", a.make_glossary),
                                   ("--no-recover", a.no_recover)) if v]
         if ignored:
             print("PPTX 에서는 쓸 수 없는 옵션입니다: " + ", ".join(ignored))
@@ -209,6 +214,26 @@ def _main(argv: list[str] | None = None) -> int:
         print(rng)
         return 2
     first, last = rng
+
+    # 용어집 만들기는 번역 없이 끝난다. 추론 서버도 필요 없다.
+    if a.make_glossary:
+        from . import terms
+        step("용어 후보 추출")
+        rows = terms.extract(src, first, last)
+        if not rows:
+            print("  반복되는 전문 용어를 찾지 못했습니다 "
+                  "(문서가 짧거나 텍스트 레이어가 없을 수 있습니다)")
+            return 1
+        out_csv = a.make_glossary.expanduser().resolve()
+        terms.write_csv(out_csv, rows)
+        info(f"{len(rows)}개 후보 → {out_csv}")
+        info("번역어 칸을 채운 뒤 --glossary 로 넘기세요. 필요 없는 줄은 지우면 됩니다.")
+        print()
+        for n, t in rows[:10]:
+            print(f"    {t}  ({n}회)")
+        if len(rows) > 10:
+            print(f"    … 외 {len(rows) - 10}개")
+        return 0
 
     work = (a.work or Path.cwd() / f"{src.stem}_ko").expanduser().resolve()
     out = (a.out or work / f"{src.stem}_한국어.pdf").expanduser().resolve()

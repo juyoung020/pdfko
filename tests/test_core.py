@@ -343,3 +343,43 @@ def test_splice_page_checks_geometry(tmp_path):
     for bad in (two, small):
         with pytest.raises(ValueError):
             recover.splice_page(tgt, 2, bad, tgt)
+
+
+def test_term_extraction_is_domain_agnostic(tmp_path):
+    """분야 어휘 목록 없이 문서에서 용어를 뽑는다.
+
+    강화학습 용어를 도구에 박아 두면 그 책에만 맞는 도구가 된다. 여기서는
+    생물학 문서를 넣고 생물학 용어가 나오는지 본다.
+    """
+    import pymupdf
+    from pdfko import terms
+    body = ("The cell membrane regulates transport. Membrane proteins embedded in "
+            "the cell membrane act as ion channels. An ion channel opens when the "
+            "membrane potential changes. Membrane potential depends on ion channel "
+            "density. Cell membrane repair follows membrane potential collapse. "
+            "Ion channels and membrane proteins together set the membrane potential. ")
+    src = tmp_path / "bio.pdf"
+    d = pymupdf.open()
+    for _ in range(3):
+        p = d.new_page()
+        y = 80
+        for line in [body[i:i + 90] for i in range(0, len(body), 90)] * 3:
+            p.insert_text((60, y), line, fontsize=9)
+            y += 14
+    d.save(src); d.close()
+
+    got = [t for _, t in terms.extract(src, min_count=3, top=20)]
+    assert any("membrane" in t for t in got), got
+    # 기능어는 후보가 되면 안 된다
+    assert not {"the", "and", "when", "with"} & set(got)
+
+
+def test_generated_glossary_is_parseable(tmp_path):
+    """만든 CSV 가 그대로 --glossary 로 되돌아가야 한다. 주석·여분 칸 금지."""
+    import csv
+    from pdfko import terms
+    out = tmp_path / "g.csv"
+    terms.write_csv(out, [(9, "value function"), (5, "off-policy")])
+    rows = list(csv.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    assert [r["source"] for r in rows] == ["value function", "off-policy"]
+    assert all(r["target"] == "" for r in rows)      # 사용자가 채울 자리

@@ -126,21 +126,48 @@ PDF를 끌어다 놓고 버튼 하나만 누르면 됩니다. 창을 닫아도 �
 ```bash
 pdfko book.pdf -p 13-502            # 본문만 (참고문헌·색인 제외)
 pdfko book.pdf -p 155               # 155쪽 한 장만 — 품질 미리보기용
-pdfko book.pdf --glossary rl.csv    # 용어집 적용
 pdfko book.pdf --fresh              # 캐시 비우고 처음부터
 pdfko deck.pptx                     # 발표자료도 됩니다
 ```
 
 **먼저 몇 쪽만 돌려 보세요.** `-p 155` 로 한 장만 번역하면 1분 안에 품질을 확인할 수 있습니다. 마음에 들면 전체를 돌리면 됩니다.
 
-용어집은 `source,target`으로 시작하는 CSV입니다. 강화학습 용어 108개가 `glossaries/rl.csv`에 들어 있으니 그대로 쓰거나 고쳐 쓰면 됩니다.
+### 용어를 통일하고 싶을 때
+
+번역기는 같은 용어를 문맥에 따라 다르게 옮깁니다. 한 책 안에서 *value function*이 **가치 함수**였다가 **값 함수**가 되면 공부에 방해가 됩니다. 강의에서 쓰는 역어와 맞추고 싶을 수도 있습니다(*return*을 **이득**으로 할지 **수익**으로 할지).
+
+내 책에서 자주 나오는 용어를 뽑아 줍니다. **분야를 가리지 않습니다** — 문서를 직접 읽고 통계로 찾습니다.
+
+```bash
+pdfko book.pdf --make-glossary my.csv
+```
+
+```
+▶ 용어 후보 추출
+  60개 후보 → my.csv
+
+    agent  (437회)
+    value function  (402회)
+    monte carlo  (269회)
+    off-policy  (225회)
+    eligibility trace  (199회)
+```
+
+번역어 칸을 채우고(필요 없는 줄은 지우고) 번역할 때 넘기면 됩니다.
 
 ```csv
 source,target,tgt_lng
-policy,정책,
 value function,가치 함수,
-temporal-difference,시간차,
+off-policy,비활성 정책,
 ```
+
+```bash
+pdfko book.pdf --glossary my.csv
+```
+
+추론 서버 없이 12초면 끝나고, 500쪽 책 전체를 훑습니다. 강화학습 교재용으로 미리 채워 둔 예시가 `examples/glossary-rl.csv`에 있습니다.
+
+**없어도 됩니다.** 실측해 보면 흔한 용어는 용어집 없이도 정확합니다. 용어집이 값을 하는 곳은 역어가 갈리는 소수의 용어와 표기 흔들림입니다.
 
 ## 알아두면 좋은 것
 
