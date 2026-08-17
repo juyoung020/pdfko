@@ -66,23 +66,3 @@ def translate_batch(items: list[dict], *, port: int = 8100,
             except (TypeError, ValueError):
                 pass
     return out
-
-
-def health(port: int = 8100) -> bool:
-    try:
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5)
-        return True
-    except Exception:
-        return False
-
-
-def set_concise(on: bool, port: int = 8100) -> None:
-    """간결 모드 전환. 상자에 안 들어갈 때 다시 시도하는 용도."""
-    try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/mode",
-            data=json.dumps({"concise": on}).encode(),
-            headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass

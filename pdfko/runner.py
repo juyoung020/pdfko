@@ -179,8 +179,13 @@ class Server:
         d = self.identify(self.pp)
         if d is None:
             return False
+        # 간결 모드가 켜진 채로 남은 프록시를 물려받으면 **책 전체가 간결
+        # 모드로 번역된다.** 복구 중에 프로세스가 죽으면 되돌리기가 실행되지
+        # 않아 그 상태가 남는데, MODE 는 규칙 지문에 없어서 지문만으로는
+        # 구별되지 않는다.
         return (d.get("rules") == self.expected_rules()
-                and d.get("cache_db") == str(self.work / "cache" / "trans.db"))
+                and d.get("cache_db") == str(self.work / "cache" / "trans.db")
+                and not d.get("concise", False))
 
     def _port_is_free(self, port: int) -> bool:
         import socket

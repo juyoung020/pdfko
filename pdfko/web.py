@@ -19,11 +19,13 @@ CLI 는 인자를 외워야 하고, 몇 시간짜리 작업의 진행을 보려�
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import threading
 import time
 import traceback
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +34,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 # 임포트만으로 홈에 폴더를 만들지 않는다. 필요할 때 만든다.
 ROOT = Path.home() / "pdfko-작업"
+
+# 업로드 상한. 500쪽 교재가 보통 30~80MB 다.
+MAX_UPLOAD = int(os.environ.get("PDFKO_MAX_UPLOAD", 512 * 1024 * 1024))
 
 
 @dataclass
@@ -64,7 +69,19 @@ class Job:
         return f"{s // 3600}시간 {s % 3600 // 60}분" if s >= 3600 else f"{s // 60}분 {s % 60}초"
 
 
-app = FastAPI(title="pdfko")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Ctrl-C 로 서버를 내릴 때 우리가 띄운 프록시도 함께 내린다.
+
+    `_run` 은 데몬 스레드라 프로세스가 먼저 죽으면 그 안의 `finally` 가
+    돌지 않는다. 그래서 프록시가 고아로 남아 포트 창을 잠식했다.
+    """
+    yield
+    from . import runner
+    runner.stop_all()
+
+
+app = FastAPI(title="pdfko", lifespan=_lifespan)
 JOB: Job | None = None
 _lock = threading.Lock()
 
@@ -251,6 +268,7 @@ async def index() -> str:
 
 @app.post("/start")
 async def start(file: UploadFile = File(...), pages: str = Form(""),
+                fresh: str = Form(""),
                 glossary: UploadFile | None = File(None)):
     global JOB
     with _lock:
@@ -272,13 +290,29 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
         # part 로그를 열다가 죽는다 — 정상 상태에서 100% 실패했다.
         if work.resolve().parent != ROOT.resolve():
             return JSONResponse({"error": "파일명이 올바르지 않습니다"}, status_code=400)
-        for d in ("parts", "logs", "cache", "work", "models"):
+        for d in ("parts", "logs", "cache", "work"):
             (work / d).mkdir(parents=True, exist_ok=True)
         # 업로드 파일명은 신뢰할 수 없다. `../../.bashrc` 같은 이름으로
         # 홈 디렉터리 밖에 쓸 수 있었다. 파일명만 취한다.
         src = work / safe
-        with src.open("wb") as f:
-            shutil.copyfileobj(file.file, f)
+        # 크기를 재면서 받는다. `accept=".pdf"` 는 브라우저 쪽 표시일 뿐이고
+        # 서버는 무엇이든 받는다. 제한이 없으면 40GB POST 하나가 홈을 채운다.
+        written = 0
+        try:
+            with src.open("wb") as f:
+                while True:
+                    buf = file.file.read(1 << 20)
+                    if not buf:
+                        break
+                    written += len(buf)
+                    if written > MAX_UPLOAD:
+                        raise ValueError("too big")
+                    f.write(buf)
+        except ValueError:
+            src.unlink(missing_ok=True)
+            return JSONResponse(
+                {"error": f"파일이 너무 큽니다 (최대 {MAX_UPLOAD // (1 << 20)}MB)"},
+                status_code=413)
         # 같은 파일명으로 **다른 문서**를 올리면 구간 .done 표식이 남아 있어
         # 번역을 통째로 건너뛰고 이전 문서의 번역을 내놓았다. 완료로 보고하면서.
         # 내용 해시가 다르면 이전 산출물을 버린다.
@@ -289,6 +323,14 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
             shutil.rmtree(work / "parts", ignore_errors=True)
             (work / "parts").mkdir(parents=True, exist_ok=True)
         stamp.write_text(digest)
+        # 명령줄의 `--fresh` 에 해당한다. 이게 없으면 같은 파일을 다시 올려도
+        # .done 표식 때문에 몇 초 만에 같은 결과가 돌아오고, 화면에서 다시
+        # 시킬 방법이 없다.
+        if fresh:
+            shutil.rmtree(work / "parts", ignore_errors=True)
+            (work / "parts").mkdir(parents=True, exist_ok=True)
+            for suffix in ("", "-wal", "-shm"):
+                (work / "cache" / f"trans.db{suffix}").unlink(missing_ok=True)
         gl = None
         if glossary is not None and glossary.filename:
             gl = work / "glossary.csv"
@@ -396,6 +438,7 @@ pre{background:color-mix(in srgb,var(--fg) 5%,transparent);border-radius:10px;pa
     <input type="file" id="glo" accept=".csv" style="display:block;font-size:13px">
   </div>
   <div class="row" style="justify-content:flex-end">
+    <label class="opt"><input type="checkbox" id="fresh"> 처음부터 다시 번역</label>
     <button id="go" disabled>번역 시작</button>
   </div>
 </div>
@@ -433,6 +476,7 @@ $('#go').onclick=async()=>{
   const fd=new FormData();
   fd.append('file',picked);
   fd.append('pages',$('#pages').value.trim());
+  if($('#fresh').checked)fd.append('fresh','1');
   if($('#glo').files[0])fd.append('glossary',$('#glo').files[0]);
   const r=await fetch('/start',{method:'POST',body:fd});
   if(!r.ok){const j=await r.json();alert(j.error||'시작하지 못했습니다');$('#go').disabled=false;return}

@@ -61,8 +61,10 @@ _STATE = Path(os.environ.get("XDG_STATE_HOME",
                              Path.home() / ".local" / "state")) / "pdfko"
 CACHE_DB = Path(os.environ.get("CACHE_DB", _STATE / "cache" / "trans.db"))
 LOG_DIR = Path(os.environ.get("LOG_DIR", _STATE / "logs"))
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-CACHE_DB.parent.mkdir(parents=True, exist_ok=True)
+# 임포트 시점에 폴더를 만들거나 DB 를 열지 않는다. `runner.Server` 가 규칙
+# 지문을 계산하려고 이 모듈을 임포트하므로, **모든 CLI 실행이** 쓰지도 않을
+# SQLite 를 부모 프로세스에 만들고 있었다. pytest 도 마찬가지였고, 읽기 전용
+# HOME 에서는 임포트 자체가 PermissionError 로 죽었다.
 SAMPLE_N = int(os.environ.get("SAMPLE_N", "8"))
 # 깨진 합자 사전. cli 가 원본을 훑어 만들어 두고 경로를 넘겨준다.
 GLYPHMAP = glyphmap.load(Path(os.environ["GLYPHMAP"])) if os.environ.get("GLYPHMAP") else {}
@@ -261,28 +263,37 @@ def parse_output(raw: str) -> list | None:
 
 # ---------------------------------------------------------------- 캐시
 _lock = threading.Lock()
-DB = sqlite3.connect(CACHE_DB, timeout=30, check_same_thread=False)
-DB.execute("PRAGMA journal_mode=WAL")
-DB.execute(
-    "CREATE TABLE IF NOT EXISTS tr ("
-    " k TEXT PRIMARY KEY, model TEXT, src TEXT, tgt TEXT, attempts INT, ts REAL)"
-)
-DB.commit()
+_DB: sqlite3.Connection | None = None
+
+
+def _db() -> sqlite3.Connection:
+    """캐시 DB 를 처음 쓸 때 연다. **임포트 시점에 열지 않는다.**"""
+    global _DB
+    if _DB is None:
+        CACHE_DB.parent.mkdir(parents=True, exist_ok=True)
+        _DB = sqlite3.connect(CACHE_DB, timeout=30, check_same_thread=False)
+        _DB.execute("PRAGMA journal_mode=WAL")
+        _DB.execute(
+            "CREATE TABLE IF NOT EXISTS tr ("
+            " k TEXT PRIMARY KEY, model TEXT, src TEXT, tgt TEXT,"
+            " attempts INT, ts REAL)")
+        _DB.commit()
+    return _DB
 
 
 def cache_get(k: str) -> str | None:
     with _lock:
-        r = DB.execute("SELECT tgt FROM tr WHERE k=?", (k,)).fetchone()
+        r = _db().execute("SELECT tgt FROM tr WHERE k=?", (k,)).fetchone()
     return r[0] if r else None
 
 
 def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
     with _lock:
-        DB.execute(
+        _db().execute(
             "INSERT OR REPLACE INTO tr(k,model,src,tgt,attempts,ts) VALUES(?,?,?,?,?,?)",
             (k, MODEL, src[:8000], tgt, attempts, time.time()),
         )
-        DB.commit()
+        _db().commit()
 
 
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
@@ -296,6 +307,7 @@ client = httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=10.0))
 
 
 def log_jsonl(name: str, obj: dict) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_DIR / name, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 

@@ -282,7 +282,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"결과를 저장할 수 없는 경로입니다: {out.parent}  ({e.strerror})")
         return 2
 
-    for d in ("parts", "logs", "cache", "work", "models"):
+    for d in ("parts", "logs", "cache", "work"):
         (work / d).mkdir(parents=True, exist_ok=True)
 
     # 작업 디렉터리에 **어떤 문서**를 넣었는지 새겨 둔다.

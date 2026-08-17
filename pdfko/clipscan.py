@@ -26,7 +26,7 @@ MuPDF(pymupdf)는 잘라내기를 존중해서 `get_text()` 에 안 나온다. �
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
@@ -36,7 +36,7 @@ SHOW_OPS = {"Tj", "TJ", "'", '"'}
 
 # 한 텍스트 블록에서 이 개수 이상이 전부 잘라내기 밖일 때만 통째로 지운다.
 # 경계에 걸친 글자 두세 개 때문에 보이는 본문을 잃는 일이 없도록 한다.
-MIN_BLOCK_HIDDEN = 1
+MIN_BLOCK_HIDDEN = 3
 
 
 @dataclass
@@ -80,7 +80,6 @@ class PageScan:
     hidden: int = 0                 # 잘라내기 밖 글자 수(대략)
     shown: int = 0
     error: str = ""                 # 스트림을 못 읽었을 때의 사유
-    spans: list = field(default_factory=list)   # (시작오프셋, 끝오프셋)
 
 
 _ESC_RE = re.compile(rb"\\[0-7]{1,3}|\\.", re.S)
@@ -219,7 +218,6 @@ def scan_page(doc: pymupdf.Document, pno: int) -> PageScan:
     last_rect: tuple | None = None
     tm = lm = (1, 0, 0, 1, 0, 0)
     in_text = False
-    show_start: int | None = None
 
     last_str: bytes | None = None      # 직전에 본 문자열/배열 피연산자
 
@@ -265,13 +263,9 @@ def scan_page(doc: pymupdf.Document, pno: int) -> PageScan:
                 res.shown += n_ch
             else:
                 res.hidden += n_ch
-                if show_start is not None:
-                    res.spans.append((show_start, b))
         if t not in ("W", "W*"):
             if t != "re":
                 pending.clear()
-        if t == "BT" or (in_text and t in SHOW_OPS):
-            show_start = b
         if t in SHOW_OPS:
             last_str = None
     return res
