@@ -153,6 +153,12 @@ def _main(argv: list[str] | None = None) -> int:
     # --recheck 는 번역을 하지 않으므로 캐시를 비우는 것이 무의미하다.
     # 조용히 무시하면 사용자는 캐시가 지워진 줄 안다. PPTX 쪽은 이미
     # 무시되는 옵션을 오류로 막고 있는데 여기만 빠져 있었다.
+    if a.make_glossary and (a.no_glossary or a.glossary):
+        other = "--no-glossary" if a.no_glossary else "--glossary"
+        print(f"--make-glossary 와 {other} 는 같이 쓸 수 없습니다 "
+              f"(--make-glossary 는 후보만 뽑고 번역하지 않습니다)")
+        return 2
+
     if a.recheck and a.fresh:
         print("--recheck 와 --fresh 는 같이 쓸 수 없습니다 "
               "(--recheck 는 번역을 하지 않으므로 캐시를 비울 이유가 없습니다)")
@@ -228,7 +234,18 @@ def _main(argv: list[str] | None = None) -> int:
                   "(문서가 짧거나 텍스트 레이어가 없을 수 있습니다)")
             return 1
         out_csv = a.make_glossary.expanduser().resolve()
-        terms.write_csv(out_csv, rows)
+        # 손으로 채운 파일을 말없이 덮어쓰면 안 된다. 문서에 적힌 흐름이
+        # "뽑아서 → 손으로 채우고 → 다시 넘긴다"이므로, 덮어쓸 가능성이
+        # 가장 큰 파일이 바로 사용자가 한 시간 들여 채운 그 파일이다.
+        if out_csv.exists():
+            print(f"이미 있는 파일입니다: {out_csv}")
+            print("  덮어쓰지 않았습니다. 다른 이름을 주거나 파일을 옮기세요.")
+            return 2
+        try:
+            terms.write_csv(out_csv, rows)
+        except OSError as e:
+            print(f"용어집을 저장할 수 없습니다: {out_csv}  ({e.strerror or e})")
+            return 2
         info(f"{len(rows)}개 후보 → {out_csv}")
         info("번역어 칸을 채운 뒤 --glossary 로 넘기세요. 필요 없는 줄은 지우면 됩니다.")
         print()
@@ -364,7 +381,6 @@ def _main(argv: list[str] | None = None) -> int:
         srv.glyphmap = srv_glyphmap
         # 용어집·프롬프트가 바뀌면 캐시가 무효화되어야 한다. 요청 본문에서는
         # 뽑을 수 없다 — BabelDOC 은 그것들을 user 메시지 안에 말아 넣는다.
-        srv.user_sig = runner.Server.signature(a.glossary, a.prompt)
         srv.start_ollama()
         info(f"추론 서버 :{srv.op}")
         if a.gguf:
@@ -377,26 +393,18 @@ def _main(argv: list[str] | None = None) -> int:
             warn(f"    OLLAMA_HOST=127.0.0.1:{srv.op} ollama list   ← 확인")
             warn(f"    pdfko {src.name} --gguf <모델.gguf>          ← 최초 1회 등록")
             return 3
-        srv.start_proxy(sys.executable)
-        info(f"미들웨어 :{srv.pp}")
-        pl = srv.proxy_log_dir()
-        if pl and pl.resolve() != (work / "logs").resolve():
-            info(f"  앞선 실행의 프록시를 재사용한다 — 미들웨어 로그는 {pl}")
-
-        # 용어 통일: 자주 나오는 용어의 역어를 **먼저 한 번 정해** 두고
-        # 문서 끝까지 그걸 쓴다. 이걸 안 하면 같은 `value function` 이
-        # 앞에서는 '가치 함수', 뒤에서는 '값 함수'가 된다. 교재에서는
-        # 그 흔들림이 그대로 공부 방해가 된다.
+        # 용어 통일은 **프록시를 띄우기 전에** 끝낸다. 용어집 지문은 프록시
+        # 기동 시점에 자식에게 넘어가므로, 그 뒤에 용어집을 만들면 캐시 키에
+        # 반영되지 않는다. 그러면 역어가 달라져도 옛 번역이 그대로 나온다.
         glossary = a.glossary
         if auto_terms:
             step("용어 통일")
             from . import terms as _terms
             # 무엇이 이 분야의 용어인지는 모델이 고른다. 낱말 목록으로 거르면
-            # 그 순간 분야 전용 도구가 된다.
-            # 선별은 번역이 아니므로 **추론 서버에 직접**(srv.op) 묻는다.
-            # 프록시로 보내면 번역가 지시문이 붙어 "골라라"가 "옮겨라"가 된다.
+            # 그 순간 분야 전용 도구가 된다. 둘 다 추론 서버에 직접 묻는다.
             auto_terms = _terms.keep_terms(auto_terms, port=srv.op, model=a.model)
-            picked = _terms.decide(auto_terms, port=srv.pp, model=a.model)
+            picked = _terms.decide(auto_terms, port=srv.op, model=a.model,
+                                   via_proxy=False)
             if picked:
                 gpath = work / "용어집.csv"
                 _terms.write_csv(gpath, auto_terms, picked)
@@ -408,6 +416,13 @@ def _main(argv: list[str] | None = None) -> int:
                     info(f"    … 외 {len(picked) - 5}개")
             else:
                 warn("용어 역어를 정하지 못했다 — 용어집 없이 진행한다")
+
+        srv.user_sig = runner.Server.signature(glossary, a.prompt)
+        srv.start_proxy(sys.executable)
+        info(f"미들웨어 :{srv.pp}")
+        pl = srv.proxy_log_dir()
+        if pl and pl.resolve() != (work / "logs").resolve():
+            info(f"  앞선 실행의 프록시를 재사용한다 — 미들웨어 로그는 {pl}")
 
         step("번역")
         for i, c in enumerate(chunks, 1):

@@ -125,31 +125,38 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         job.say("서버 기동", "추론 서버를 켜는 중", 10)
         srv = runner.Server(job.work, "hy-mt2-7b")
         srv.glyphmap = gm_path
-        srv.user_sig = runner.Server.signature(glossary)
         srv.start_ollama()
+        if not srv.model_ready():
+            raise RuntimeError(
+                "모델 'hy-mt2-7b' 이 추론 서버에 없습니다. 터미널에서 "
+                "`pdfko <파일> --gguf <모델.gguf>` 로 한 번 등록해 주세요.")
+
+        # 용어 통일은 **프록시를 띄우기 전에** 끝내야 한다. user_sig 는
+        # start_proxy 가 자식에게 넘길 때만 읽히므로, 나중에 넣으면 이미 뜬
+        # 프록시에는 반영되지 않는다. 그러면 용어집이 캐시 키에 안 들어가고,
+        # 다시 돌렸을 때 옛 번역이 그대로 나온다. 용어 선별은 추론 서버만
+        # 있으면 되므로 여기서 해도 된다.
+        if not glossary:
+            job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
+            cand = terms.extract(src, first, last)
+            cand = terms.keep_terms(cand, port=srv.op, model="hy-mt2-7b")
+            picked = terms.decide(cand, port=srv.op, model="hy-mt2-7b",
+                                  via_proxy=False)
+            if picked:
+                gpath = job.work / "용어집.csv"
+                terms.write_csv(gpath, cand, picked)
+                glossary = gpath
+                job.log.append(f"{len(picked)}개 용어의 역어를 고정했다: "
+                               + ", ".join(f"{k}→{v}"
+                                           for k, v in list(picked.items())[:5]))
+
+        srv.user_sig = runner.Server.signature(glossary)
         srv.start_proxy(__import__("sys").executable)
         # 엔진 캐시는 우리 미들웨어를 통째로 우회한다. 지우지 않으면 검증도
         # 합자 복구도 폭 검사도 거치지 않은 옛 결과가 그대로 나온다.
         # 실측: 작업 폴더를 지우고 같은 파일을 다시 올렸더니 미들웨어 호출
         # 0회로 22초 만에 "완료"됐다. CLI 는 지우는데 여기만 빠져 있었다.
         runner.clear_engine_cache()
-
-        # 용어 통일. CLI 에만 넣고 여기를 또 빠뜨렸다 — 엔진 캐시, 합자 사전에
-        # 이어 세 번째다. 같은 문서를 CLI 로 돌리면 용어가 고정되고 웹으로
-        # 돌리면 안 되는, 사용자가 알 길 없는 차이가 생긴다.
-        if not glossary:
-            job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
-            cand = terms.extract(src, first, last)
-            cand = terms.keep_terms(cand, port=srv.op, model="hy-mt2-7b")
-            picked = terms.decide(cand, port=srv.pp, model="hy-mt2-7b")
-            if picked:
-                gpath = job.work / "용어집.csv"
-                terms.write_csv(gpath, cand, picked)
-                glossary = gpath
-                srv.user_sig = runner.Server.signature(gpath)
-                job.log.append(f"{len(picked)}개 용어의 역어를 고정했다: "
-                               + ", ".join(f"{k}→{v}"
-                                           for k, v in list(picked.items())[:5]))
 
         chunks = runner.plan_chunks(first, last, 40, job.work)
         if not chunks:

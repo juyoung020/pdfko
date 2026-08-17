@@ -37,6 +37,9 @@ from pathlib import Path
 
 from .repair import repair
 
+# 자리표시자·태그. 역어에 들어가면 없던 수식을 문단에 심게 된다.
+KEEP_RE = re.compile(r"\{v\d+\}|</?style[^>]*>")
+
 # **영어 문법의 닫힌 낱말 부류만** 넣는다 — 관사·전치사·대명사·접속사·조동사.
 # 어느 분야에서도 전문 용어가 될 수 없는 낱말들이고, 이건 분야에 대한 지식이
 # 아니라 영어라는 언어에 대한 사실이다.
@@ -95,20 +98,54 @@ def _norm(t: str, vocab: set[str] | None = None) -> str:
     return t
 
 
+#: 정규화된 용어 → 문서에 실제로 찍혀 있는 표기들. `extract` 가 채운다.
+SURFACES: dict[str, set[str]] = {}
+
+_EDGE = " \t\r\n.,;:!?()[]{}\"'“”‘’"
+
+
 def extract(pdf: str | Path, first: int = 1, last: int | None = None,
             min_count: int = 5, top: int = 60) -> list[tuple[int, str]]:
-    """(출현횟수, 용어) 목록을 빈도순으로. 분야 어휘 목록을 쓰지 않는다."""
+    """(출현횟수, 용어) 목록을 빈도순으로. 분야 어휘 목록을 쓰지 않는다.
+
+    정규화된 용어와 함께 **문서에 실제로 찍혀 있는 표기**를 `SURFACES` 에
+    모은다. 이게 없으면 용어집이 무용지물이 된다 — 번역 엔진은 용어집의
+    원어를 원문 텍스트에 **그대로** 대조하는데, 우리가 넣는 것은 합자를
+    복구하고 기호를 걷어낸 *깨끗한* 철자이기 때문이다.
+
+        용어집에 넣은 것   off-policy            원문에 0회
+        원문에 있는 것     o↵-policy             74회
+        용어집에 넣은 것   state-action          원문에 0회
+        원문에 있는 것     state–action (엔대시)  83회
+
+    실측으로 그 책에서 가장 특징적인 용어 440여 회가 통째로 빗나갔다.
+    그러면서 화면에는 "54개 용어의 역어를 고정했다"라고 찍혔다.
+    """
     import pymupdf
 
     words: list[str] = []
+    raws: list[str] = []
     italic: set[str] = set()
+    SURFACES.clear()
     with pymupdf.open(pdf) as d:
         end = min(last or d.page_count, d.page_count)
         for i in range(max(0, first - 1), end):
             pg = d[i]
-            # 합자 손상을 먼저 고친다. 안 그러면 `arti cial`(artificial)과
-            # `erent`(different)가 상위 후보로 올라온다. 실측으로 그랬다.
-            words += _WORD.sub(" ", repair(pg.get_text())).lower().split()
+            # 낱말 단위로 훑는다. 페이지 전체를 한 번에 씻으면 정규화된 철자와
+            # 원래 표기의 짝이 끊어져 위 문제를 고칠 수 없다.
+            for raw in pg.get_text().split():
+                raw = raw.strip(_EDGE)
+                if not raw:
+                    continue
+                # 합자 손상을 먼저 고친다. 안 그러면 `arti cial`(artificial)과
+                # `erent`(different)가 상위 후보로 올라온다. 실측으로 그랬다.
+                clean = _WORD.sub(" ", repair(raw)).lower().strip()
+                if not clean or " " in clean:
+                    clean = clean.replace(" ", "")      # `di erent` → `dierent`
+                if not clean:
+                    continue
+                words.append(clean)
+                raws.append(raw)
             for b in pg.get_text("dict")["blocks"]:
                 for ln in b.get("lines", []):
                     for s in ln.get("spans", []):
@@ -122,11 +159,20 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
     vocab = set(words)
     nm = lambda w: _norm(w, vocab)                        # noqa: E731
     ok = lambda w: len(w) > 2 and w not in STOP           # noqa: E731
-    bi = Counter(f"{nm(a)} {nm(b)}" for a, b in zip(words, words[1:])
-                 if ok(a) and ok(b) and a.isalpha() and b.isalpha())
-    hyp = Counter(nm(w) for w in words
-                  if "-" in w and 6 < len(w) < 30 and w.strip("-").replace("-", "").isalpha())
-    uni = Counter(nm(w) for w in words if len(w) > 4 and w not in STOP and w.isalpha())
+    bi, hyp, uni = Counter(), Counter(), Counter()
+    for j, w in enumerate(words):
+        raw = raws[j]
+        if j + 1 < len(words) and ok(w) and ok(words[j + 1]) \
+                and w.isalpha() and words[j + 1].isalpha():
+            key = f"{nm(w)} {nm(words[j + 1])}"
+            bi[key] += 1
+            SURFACES.setdefault(key, set()).add(f"{raw} {raws[j + 1]}")
+        if "-" in w and 6 < len(w) < 30 and w.replace("-", "").isalpha():
+            hyp[nm(w)] += 1
+            SURFACES.setdefault(nm(w), set()).add(raw)
+        if len(w) > 4 and w not in STOP and w.isalpha():
+            uni[nm(w)] += 1
+            SURFACES.setdefault(nm(w), set()).add(raw)
 
     # **구를 단일어보다 앞에 둔다.** 어휘 목록으로 거르는 대신 순서로 푼다.
     # 빈도만으로 줄을 세우면 `after`, `better` 같은 흔한 낱말이 `value function`
@@ -159,7 +205,7 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
 
 
 def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
-               batch: int = 30) -> list[tuple[int, str]]:
+               batch: int = 12) -> list[tuple[int, str]]:
     """후보 중 **전문 용어만** 모델에게 고르게 한다.
 
     통계는 "자주 나오는 말"까지만 알려 준다. 그중 무엇이 그 분야의 용어인지는
@@ -209,8 +255,10 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
             if not isinstance(verdict, dict) or not verdict:
                 raise ValueError("empty verdict")
             # 답이 없는 항목은 살린다. 모델이 빠뜨렸다고 용어를 잃으면 안 된다.
+            # `v is not False` 만 보면 `"false"`(문자열)와 `0` 이 통과한다.
+            no = (False, 0, "false", "False", "no", "No", "0")
             picked = {str(k).strip().lower()
-                      for k, v in verdict.items() if v is not False}
+                      for k, v in verdict.items() if v not in no}
             picked |= {t for _, t in chunk if t not in
                        {str(k).strip().lower() for k in verdict}}
         except Exception:
@@ -226,8 +274,42 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
     return kept
 
 
+def _translate_terms(items: list[str], port: int, model: str) -> dict[int, str]:
+    """용어를 추론 서버에 **직접** 물어 번역한다. {인덱스: 한국어}
+
+    프록시를 거치지 않는다. 용어집은 프록시를 띄우기 **전에** 만들어져야
+    하기 때문이다 — 용어집 지문은 프록시 기동 시점에 자식에게 넘어가고,
+    그 뒤에 바꾸면 이미 뜬 프록시에는 반영되지 않는다. 반영되지 않으면
+    용어집이 캐시 키에서 빠지고, 다시 돌렸을 때 옛 번역이 나온다.
+    """
+    import json
+    import urllib.request
+
+    prompt = ("Translate each English term into Korean. These are technical "
+              "terms from a document, not sentences — answer with a short noun "
+              "phrase for each.\nAnswer with a JSON object mapping every term "
+              "to its Korean translation. No explanation.\n\n"
+              + json.dumps(items, ensure_ascii=False))
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps({"model": model, "temperature": 0.1,
+                             "max_tokens": 1200,
+                             "messages": [{"role": "user", "content": prompt}]}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            raw = json.load(r)["choices"][0]["message"]["content"]
+        s, e = raw.find("{"), raw.rfind("}")
+        got = json.loads(raw[s:e + 1])
+    except Exception:
+        return {}
+    low = {str(k).strip().lower(): v for k, v in got.items()}
+    return {i: low[t] for i, t in enumerate(items)
+            if isinstance(low.get(t), str)}
+
+
 def decide(rows: list[tuple[int, str]], *, port: int, model: str,
-           batch: int = 20) -> dict[str, str]:
+           batch: int = 20, via_proxy: bool = True) -> dict[str, str]:
     """뽑은 용어의 역어를 **한 번만** 정한다. {영어: 한국어}
 
     이게 자동 용어 통일의 핵심이다. 사람이 CSV 를 채우게 하면 원클릭이 아니다.
@@ -243,15 +325,25 @@ def decide(rows: list[tuple[int, str]], *, port: int, model: str,
     picked: dict[str, str] = {}
     for i in range(0, len(rows), batch):
         chunk = [t for _, t in rows[i:i + batch]]
-        got = translate_batch([{"id": j, "input": t} for j, t in enumerate(chunk)],
-                              port=port, model=model)
+        got = (translate_batch([{"id": j, "input": t} for j, t in enumerate(chunk)],
+                               port=port, model=model)
+               if via_proxy else _translate_terms(chunk, port, model))
         for j, en in enumerate(chunk):
             ko = (got.get(j) or "").strip()
             # 용어 역어로 쓸 수 있는 값인지 본다. 짧은 명사구여야 하고,
             # 한글이 있어야 하며, 문장이 되어 돌아오면 안 된다.
-            if not ko or hangul_ratio(ko) < 0.5:
+            # `hangul_ratio` 는 글자가 하나도 없으면 1.0 을 돌려준다(번역 대상이
+            # 아니라는 뜻). 그 값을 그대로 쓰면 `19`, `—`, `| 표 |`, `{v1} 노름`
+            # 같은 것이 역어로 통과한다. `|` 는 엔진의 용어집 표를 깨뜨리고,
+            # 자리표시자는 없던 수식을 문단에 심는다. 한글을 직접 요구한다.
+            if not any("가" <= c <= "힣" for c in ko):
                 continue
-            if len(ko) > max(24, len(en)) or "\n" in ko or ko.endswith(("다.", "다")):
+            if hangul_ratio(ko) < 0.5 or KEEP_RE.search(ko) or "|" in ko:
+                continue
+            # 개행뿐 아니라 캐리지리턴도 막는다 — 엔진의 CSV 파서가 죽는다.
+            if len(ko) > max(24, len(en)) or "\n" in ko or "\r" in ko:
+                continue
+            if ko.endswith(("다.", "다")):
                 continue
             picked[en] = ko
     return picked
@@ -264,7 +356,22 @@ def write_csv(path: Path, rows: list[tuple[int, str]],
     주석이나 여분 칸을 넣지 않는다. 이 파일은 그대로 `--glossary` 로 되돌아와
     번역 엔진의 CSV 파서를 통과해야 한다. 빈도는 줄 순서로 이미 드러난다.
     """
+    import csv
+
     tg = targets or {}
-    lines = ["source,target,tgt_lng"]
-    lines += [f"{t},{tg.get(t, '')}," for _, t in rows]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with path.open("w", newline="", encoding="utf-8") as f:
+        # f-string 으로 이어 붙이면 역어에 쉼표가 하나만 들어가도 칸이 밀려
+        # 항목이 **조용히 사라지고**, 개행이 들어가면 엔진이 CSV 파싱에서
+        # 죽는다. 표준 writer 가 따옴표 처리를 해 준다.
+        w = csv.writer(f)
+        w.writerow(["source", "target", "tgt_lng"])
+        for _, t in rows:
+            ko = tg.get(t, "")
+            if targets is not None and not ko:
+                continue        # 역어를 못 정한 항목은 싣지 않는다.
+                                # 빈 칸으로 실으면 모델에게 "이 용어의 역어는
+                                # 없음"이라는 표를 보여 주는 셈이 된다.
+            # 문서에 실제로 찍힌 표기를 모두 싣는다. 정규화한 철자 하나만
+            # 넣으면 `off-policy` 는 지정하고 `o↵-policy` 74회는 놓친다.
+            for surface in sorted(SURFACES.get(t, {t})) or [t]:
+                w.writerow([surface, ko, ""])

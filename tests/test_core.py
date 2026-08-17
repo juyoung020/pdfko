@@ -582,3 +582,70 @@ def test_model_store_is_shared_not_per_workdir():
     assert Path.home() in runner.MODEL_STORE.parents
     for probe in (Path("/tmp/a_ko"), Path("/tmp/b_ko")):
         assert probe not in runner.MODEL_STORE.parents
+
+
+def test_glossary_uses_the_spelling_the_document_actually_has(tmp_path):
+    """용어집의 원어는 **원문에 그대로 있는 문자열**이어야 한다.
+
+    번역 엔진은 용어집 원어를 원문 텍스트에 그대로 대조한다. 우리가 합자를
+    복구하고 기호를 걷어낸 깨끗한 철자를 넣으면 한 번도 걸리지 않는다.
+    실측: 용어집에 `off-policy` 를 넣었는데 원문에는 `o↵-policy` 만 169회,
+    `state-action` 을 넣었는데 원문에는 엔대시 `state–action` 만 91회 있었다.
+    """
+    import csv
+    import pymupdf
+    from pdfko import terms
+    body = ("The o↵-policy method updates the state–action pair while "
+            "the o↵-policy target di↵ers from behaviour. ")
+    src = tmp_path / "s.pdf"
+    d = pymupdf.open()
+    for _ in range(3):
+        p = d.new_page()
+        y = 60
+        for line in [body] * 8:
+            p.insert_text((40, y), line, fontsize=8)
+            y += 16
+    d.save(src); d.close()
+
+    rows = terms.extract(src, min_count=3)
+    got = {t for _, t in rows}
+    assert any("policy" in t for t in got), got
+    # 합자가 복구된 깨끗한 철자로 후보가 잡히고
+    key = next(t for t in got if "policy" in t)
+    # 실제 표기는 원문에 그대로 있어야 한다
+    raw = "".join(pymupdf.open(src)[i].get_text() for i in range(3))
+    surfaces = terms.SURFACES.get(key, set())
+    assert surfaces and all(s in raw for s in surfaces), (key, surfaces)
+
+    out = tmp_path / "g.csv"
+    terms.write_csv(out, rows, {key: "비활성 정책"})
+    sources = [r["source"] for r in
+               csv.DictReader(out.read_text(encoding="utf-8").splitlines())]
+    assert sources and all(s in raw for s in sources), sources
+
+
+def test_write_csv_survives_hostile_targets(tmp_path):
+    """역어에 쉼표·따옴표가 들어가도 CSV 가 깨지면 안 된다.
+
+    f-string 으로 이어 붙이던 때는 쉼표 하나에 칸이 밀려 항목이 조용히
+    사라지고, 개행이 들어가면 엔진의 CSV 파서가 죽었다.
+    """
+    import csv
+    from pdfko import terms
+    terms.SURFACES.clear()
+    out = tmp_path / "g.csv"
+    terms.write_csv(out, [(9, "sample mean"), (8, "policy")],
+                    {"sample mean": '표본 평균, 샘플 평균', "policy": '"정책"'})
+    rows = list(csv.DictReader(out.read_text(encoding="utf-8").splitlines()))
+    assert {r["source"] for r in rows} == {"sample mean", "policy"}
+    assert rows[0]["target"] == "표본 평균, 샘플 평균"   # 칸이 밀리지 않는다
+
+
+def test_decide_rejects_letterless_and_placeholder_targets(monkeypatch):
+    """`hangul_ratio` 는 글자가 없으면 1.0 이라, 숫자·기호가 역어로 통과했다."""
+    from pdfko import terms
+    import pdfko.client as _c
+    bad = {0: "19", 1: "—", 2: "| 표 |", 3: "{v1} 노름", 4: "가치 함수입니다"}
+    monkeypatch.setattr(_c, "translate_batch", lambda *a, **k: bad)
+    got = terms.decide([(9, f"t{i}") for i in range(5)], port=1, model="m")
+    assert got == {}
