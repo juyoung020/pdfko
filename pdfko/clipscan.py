@@ -79,6 +79,7 @@ class PageScan:
     page: int
     hidden: int = 0                 # 잘라내기 밖 글자 수(대략)
     shown: int = 0
+    error: str = ""                 # 스트림을 못 읽었을 때의 사유
     spans: list = field(default_factory=list)   # (시작오프셋, 끝오프셋)
 
 
@@ -203,7 +204,11 @@ def scan_page(doc: pymupdf.Document, pno: int) -> PageScan:
     res = PageScan(page=pno + 1)
     try:
         data = b"".join(doc.xref_stream(x) or b"" for x in page.get_contents())
-    except Exception:
+    except Exception as e:
+        # 여기서 조용히 0 을 돌려주면 이 모듈이 막으려던 일이 그대로 일어난다.
+        # 숨은 글자가 있어도 임계값에 못 미쳐 청소되지 않고, 엔진이 그것까지
+        # 번역해 본문 위에 겹쳐 찍는다. 버그가 조용히 틀린 페이지가 된다.
+        res.error = f"{type(e).__name__}: {e}"
         return res
     if not data:
         return res

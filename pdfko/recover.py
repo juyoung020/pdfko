@@ -31,6 +31,7 @@ class Recovery:
     orig_page: int         # 대응하는 원본 쪽번호 (1부터)
     reasons: list[str]
     action: str            # "retranslated" | "reverted" | "kept"
+    note: str = ""         # 복구 중 터진 오류. 보고서에 그대로 싣는다.
 
 
 def _mark_reverted(page: pymupdf.Page) -> None:
@@ -72,17 +73,24 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
     _sh.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True, exist_ok=True)
 
-    def _mode(on: bool) -> None:
+    def _mode(on: bool) -> bool:
+        """간결 모드 전환. 실패하면 False — 호출부가 알아야 한다.
+
+        조용히 넘기면 간결 모드가 안 켜진 채로 그냥 재번역이 돌고, 보고서에는
+        "간결 재번역"이라고 적힌다. 1단계가 하는 일이 없는데 했다고 말하는 셈.
+        """
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:{proxy_port}/mode",
                 data=json.dumps({"concise": on}).encode(),
                 headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=10)
+            return True
         except Exception:
-            pass
+            return False
 
-    _mode(concise)
+    if concise and not _mode(True):
+        return None      # 간결 모드가 안 켜지면 1단계는 의미가 없다
     try:
         cmd = [
             "babeldoc", "--files", str(src), "--pages", str(orig_page),
@@ -240,17 +248,23 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
     """
     recs: list[Recovery] = []
     give_up: list[int] = []
+    notes: dict[int, str] = {}
     for v in severe:
         o = v.page + offset
         if on_step:
             on_step(v.page, "간결 재번역")
-        got = None
+        # 오류를 삼켜 버리면 안 된다. 예전에는 여기서 터진 예외가 그대로
+        # 되돌리기로 흘러가, 사용자에게 **"한국어가 안 맞아서 원문을 유지했다"**
+        # 는 판정으로 보고됐다. 디스크가 찼든 babeldoc 이 없든 TypeError 든
+        # 전부 같은 문구였다. 오류를 감추는 정도가 아니라 **거짓 설명으로
+        # 바꿔치기**하는 것이라, 정직한 보고를 내세우는 도구가 할 일이 아니다.
+        got, why = None, ""
         try:
             got = retranslate_page(v.page, o, src_pdf, work, model=model,
                                    proxy_port=proxy_port, glossary=glossary,
                                    prompt_file=prompt_file)
-        except Exception:
-            got = None
+        except Exception as e:
+            got, why = None, f"재번역 실패: {type(e).__name__}: {e}"
         if got and _is_korean(got):
             try:
                 splice_page(trans_pdf, v.page, got, trans_pdf)
@@ -260,14 +274,18 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
                     recs.append(Recovery(page=v.page, orig_page=o,
                                          reasons=v.reasons, action="retranslated"))
                     continue
-            except Exception:
-                pass          # 끼워 넣기가 실패하면 되돌리기로 내려간다
+            except Exception as e:
+                why = f"끼워 넣기 실패: {type(e).__name__}: {e}"
         give_up.append(v.page)
+        notes[v.page] = why
 
     if give_up:
         if on_step:
             on_step(0, f"{len(give_up)}쪽 원문 유지")
-        recs += revert_pages(trans_pdf, orig_pdf, give_up, offset, trans_pdf)
+        back = revert_pages(trans_pdf, orig_pdf, give_up, offset, trans_pdf)
+        for r in back:
+            r.note = notes.get(r.page, "")
+        recs += back
     return recs
 
 
@@ -290,13 +308,26 @@ def write_report(path: Path, verdicts: list[PageVerdict],
         lines += ["## 파손이 감지된 페이지", "",
                   "| 번역본 쪽 | 원본 쪽 | 사유 | 처리 |",
                   "|---|---|---|---|"]
-        act = {r.page: r.action for r in recoveries}
+        by_page = {r.page: r for r in recoveries}
         for v in broken:
+            r = by_page.get(v.page)
             a = {"reverted": "원문 유지", "retranslated": "재번역"}.get(
-                act.get(v.page, ""), "그대로 둠")
+                r.action if r else "", "그대로 둠")
+            # 복구가 터졌으면 그 오류를 그대로 싣는다. "원문 유지"라고만
+            # 적으면 사용자는 도구가 판단해서 그렇게 한 줄 안다.
+            if r and r.note:
+                a = f"복구 실패 — {r.note}"
             lines.append(f"| {v.page} | {v.page + offset} | "
                          f"{', '.join(v.reasons)} | {a} |")
         lines.append("")
+    failed = [r for r in recoveries if r.note]
+    if failed:
+        lines += ["## 복구 중 오류가 난 페이지", "",
+                  "아래 페이지는 도구가 판단해서 원문을 남긴 것이 **아니라**, "
+                  "복구 과정에서 오류가 나 되돌린 것입니다.", ""]
+        lines += [f"- {r.page}쪽 — {r.note}" for r in failed]
+        lines.append("")
+
     lines += [
         "## 이 표를 읽는 법", "",
         "- **겹침** — 글자가 서로 포개져 찍혔다. 한국어가 길어 자리가 부족한 경우.",

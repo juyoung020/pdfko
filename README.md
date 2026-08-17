@@ -219,6 +219,12 @@ OLLAMA_HOST=127.0.0.1:11500 ollama list
 
 ## 라이선스
 
-MIT
+**pdfko 자체는 MIT** 입니다. 다만 혼자 돌아가지 않으니 함께 쓰는 것들의 조건도 확인하세요.
+
+| | 라이선스 | 알아둘 점 |
+|---|---|---|
+| pdfko | MIT | |
+| [BabelDOC](https://github.com/funstory-ai/BabelDOC) | **AGPL-3.0** | 별도 프로그램으로 호출하지만, `pdfko-web` 을 남에게 서비스한다면 AGPL 13조가 걸립니다 |
+| [Hy-MT2](https://huggingface.co/tencent/Hy-MT2-7B-GGUF) | Tencent 자체 라이선스 | 상업적 이용 전에 원문을 확인하세요 |
 
 번역 결과물의 저작권은 원저작물을 따릅니다. 개인 학습 목적으로 쓰세요.

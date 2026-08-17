@@ -204,6 +204,20 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
     return out[:top]
 
 
+def _map(fn, items: list, workers: int = 8) -> list:
+    """배치를 동시에 처리한다. 순서는 그대로 유지한다.
+
+    배치들은 서로 독립인데 순서대로 돌리면 GPU 가 한 번에 하나씩만 문다 —
+    실측으로 단일 스트림 41 tok/s, 8개 동시 110 tok/s. 용어 단계가 60개
+    후보에 54초 걸렸고 그 대부분이 대기였다. 추론 서버 슬롯도 8개다.
+    """
+    if len(items) < 2:
+        return [fn(x) for x in items]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as ex:
+        return list(ex.map(fn, items))
+
+
 def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
                batch: int = 12) -> list[tuple[int, str]]:
     """후보 중 **전문 용어만** 모델에게 고르게 한다.
@@ -223,9 +237,7 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
     import json
     import urllib.request
 
-    kept: list[tuple[int, str]] = []
-    for i in range(0, len(rows), batch):
-        chunk = rows[i:i + batch]
+    def judge(chunk: list[tuple[int, str]]) -> list[tuple[int, str]]:
         # **항목별로** 묻는다. "골라서 배열로 돌려달라"고 하면 어떤 분야에서는
         # 모델이 통째로 `[]` 를 뱉는다 — 실측으로 헌법학 용어 12개(judicial
         # review, due process …)에 5회 연속 빈 배열이었고, 같은 형식으로 물리
@@ -262,16 +274,17 @@ def keep_terms(rows: list[tuple[int, str]], *, port: int, model: str,
             picked |= {t for _, t in chunk if t not in
                        {str(k).strip().lower() for k in verdict}}
         except Exception:
-            kept += chunk            # 판단하지 못하면 통째로 살린다
-            continue
+            return chunk             # 판단하지 못하면 통째로 살린다
         # **원문과 정확히 일치하는 것만** 남긴다. 손상된 항목에 대해 모델은
         # 버리는 대신 고쳐서 돌려주는 일이 있는데(`nite-horizon` → `finite
         # horizon`), 그 교정본은 실제 문서에 없는 문자열이라 용어집에 넣으면
         # 아무 데도 걸리지 않는다. 일치하지 않으면 자동으로 빠지는 셈이라
         # 손상 항목 제거가 공짜로 따라온다 — 실측 5개 중 5개.
         got = [(n, t) for n, t in chunk if t in picked]
-        kept += got if got else chunk
-    return kept
+        return got if got else chunk
+
+    chunks = [rows[i:i + batch] for i in range(0, len(rows), batch)]
+    return [row for part in _map(judge, chunks) for row in part]
 
 
 def _translate_terms(items: list[str], port: int, model: str) -> dict[int, str]:
@@ -322,12 +335,15 @@ def decide(rows: list[tuple[int, str]], *, port: int, model: str,
     from .client import translate_batch
     from .repair import hangul_ratio
 
+    def one(chunk: list[str]) -> dict[int, str]:
+        return (translate_batch([{"id": j, "input": t} for j, t in enumerate(chunk)],
+                                port=port, model=model)
+                if via_proxy else _translate_terms(chunk, port, model))
+
+    chunks = [[t for _, t in rows[i:i + batch]]
+              for i in range(0, len(rows), batch)]
     picked: dict[str, str] = {}
-    for i in range(0, len(rows), batch):
-        chunk = [t for _, t in rows[i:i + batch]]
-        got = (translate_batch([{"id": j, "input": t} for j, t in enumerate(chunk)],
-                               port=port, model=model)
-               if via_proxy else _translate_terms(chunk, port, model))
+    for chunk, got in zip(chunks, _map(one, chunks)):
         for j, en in enumerate(chunk):
             ko = (got.get(j) or "").strip()
             # 용어 역어로 쓸 수 있는 값인지 본다. 짧은 명사구여야 하고,

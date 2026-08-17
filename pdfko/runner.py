@@ -214,8 +214,12 @@ class Server:
     def start_ollama(self) -> None:
         if self.ollama_up():
             return
+        # 부모 환경을 물려준다. 예전에는 PATH/HOME 만 넘겼는데, 그러면
+        # CUDA_VISIBLE_DEVICES·LD_LIBRARY_PATH 가 사라져 ollama 가 조용히
+        # CPU 로 떨어진다. 500쪽이 4시간에서 며칠이 된다. 우리가 정하는 값은
+        # 아래에서 덮어쓰므로 낡은 OLLAMA_* 가 새어 들 걱정은 없다.
         env = {
-            "PATH": os.environ["PATH"], "HOME": os.environ["HOME"],
+            **os.environ,
             "OLLAMA_HOST": f"127.0.0.1:{self.op}",
             "OLLAMA_MODELS": str(MODEL_STORE),
             # 슬롯 수는 KV 캐시를 늘려 **레이어를 GPU 밖으로 밀어낼 수 있다.**

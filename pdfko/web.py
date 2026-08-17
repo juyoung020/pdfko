@@ -94,7 +94,12 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         job.say("사전 점검", f"{total}쪽 중 {first}-{last} 번역", 4)
 
         src = job.src
-        hidden = [r for r in clipscan.scan(src, first, last) if r.hidden >= 40]
+        scans = clipscan.scan(src, first, last)
+        unreadable = [r.page for r in scans if r.error]
+        if unreadable:
+            job.log.append(f"{len(unreadable)}쪽은 내용을 읽지 못해 숨은 글자 "
+                           f"검사를 건너뛰었습니다")
+        hidden = [r for r in scans if r.hidden >= 40]
         if hidden:
             job.say("원본 청소", f"가려진 글자가 있는 {len(hidden)}쪽 처리 중", 6)
             cleaned = job.work / "cleaned.pdf"

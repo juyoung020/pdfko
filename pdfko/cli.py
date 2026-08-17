@@ -40,8 +40,8 @@ def warn(s: str) -> None:
 
 # ---------------------------------------------------------------- 사전 점검
 def preflight(src: Path, first: int = 1, last: int | None = None
-              ) -> tuple[int, bool]:
-    """PDF 를 열어보고 위험 신호를 미리 알린다. (쪽수, 텍스트레이어_손상)
+              ) -> tuple[int, bool, bool]:
+    """PDF 를 열어보고 위험 신호를 미리 알린다. (쪽수, 손상여부, 텍스트있음)
 
     표본은 **번역할 구간**에서 뽑는다. 예전에는 무조건 앞 40쪽을 봤는데,
     서지 정보가 멀쩡한 책은 본문이 깨져 있어도 손상 없음으로 판정돼 합자
@@ -59,8 +59,11 @@ def preflight(src: Path, first: int = 1, last: int | None = None
     info(f"{n}쪽")
 
     if len(sample.strip()) < 500:
-        warn("텍스트 레이어가 거의 없다. 스캔본이면 이 도구로는 번역할 수 없다.")
-        return n, False
+        # 판정만 하고 그대로 진행하면 500쪽 스캔본에 서너 시간을 쓰고
+        # 영어 PDF 를 내놓는다. 여기서 멈춘다.
+        warn("텍스트 레이어가 거의 없습니다 — 스캔한 PDF 로 보입니다.")
+        warn("글자가 이미지인 문서는 이 도구로 번역할 수 없습니다.")
+        return n, False, False
 
     damaged = looks_damaged(sample)
     if damaged:
@@ -68,15 +71,18 @@ def preflight(src: Path, first: int = 1, last: int | None = None
 
     import shutil as _sh
     if not _sh.which("pdffonts"):
-        return n, damaged        # poppler 가 없으면 폰트 점검만 건너뛴다
-    fonts = subprocess.run(["pdffonts", str(src)],
-                           capture_output=True, text=True).stdout
+        return n, damaged, True  # poppler 가 없으면 폰트 점검만 건너뛴다
+    # 번역할 구간만 본다. 전체에 돌리면 33MB 책에서 3.7초가 매 실행마다
+    # 나가는데, 그 결과로 하는 일은 안내 한 줄이다.
+    fonts = subprocess.run(
+        ["pdffonts", "-f", str(first), "-l", str(min(last or first + 40, first + 40)),
+         str(src)], capture_output=True, text=True).stdout
     if fonts and " no " in fonts:
         uni_no = sum(1 for l in fonts.splitlines()[2:]
                      if len(l.split()) >= 5 and l.split()[-2] == "no")
         if uni_no:
             info(f"ToUnicode 없는 폰트 {uni_no}종 — 추출 텍스트가 깨질 수 있다")
-    return n, damaged
+    return n, damaged, True
 
 
 # ---------------------------------------------------------------- 본 흐름
@@ -296,7 +302,9 @@ def _main(argv: list[str] | None = None) -> int:
     step("사전 점검")
     # 손상 판정은 **번역할 구간**을 봐야 한다. 문서 앞 40쪽만 표본으로 삼으면,
     # 앞쪽 서지 정보가 멀쩡한 책은 본문이 깨져 있어도 사전 없이 진행한다.
-    _, damaged = preflight(src, first, last)
+    _, damaged, has_text = preflight(src, first, last)
+    if not has_text:
+        return 2
     info(f"번역 범위 {first}-{last}쪽")
 
     # 잘라내기로 가려진 '보이지 않는 글자'를 미리 제거한다.
@@ -304,7 +312,13 @@ def _main(argv: list[str] | None = None) -> int:
     # 겹쳐 찍는다. 이 책에서 페이지 하나에 최대 1,094자가 숨어 있었다.
     # 번역할 구간만 훑는다. 전체를 훑으면 548쪽 문서에서 쓰지도 않을 페이지를
     # 재고, 게다가 clean() 안에서 한 번 더 훑어 같은 일을 두 번 한다.
-    hidden = [r for r in clipscan.scan(src, first, last) if r.hidden >= 40]
+    scans = clipscan.scan(src, first, last)
+    unreadable = [r.page for r in scans if r.error]
+    if unreadable:
+        # 조용히 넘기면 그 페이지의 숨은 글자가 남아 본문 위에 겹쳐 찍힌다.
+        warn(f"{len(unreadable)}쪽은 내용을 읽지 못해 숨은 글자 검사를 "
+             f"건너뛰었습니다 (예: {', '.join(str(p) for p in unreadable[:5])})")
+    hidden = [r for r in scans if r.hidden >= 40]
     if hidden:
         info(f"가려진 글자가 있는 페이지 {len(hidden)}쪽 — 청소본을 만든다")
         cleaned = work / "cleaned.pdf"
