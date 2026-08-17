@@ -1,0 +1,31 @@
+[project]
+name = "pdfko"
+version = "0.1.0"
+description = "영문 교재 PDF를 레이아웃 그대로 한국어로 번역한다 (로컬 LLM)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx>=0.27",
+  "pymupdf>=1.24",
+  "python-pptx>=1.0",
+  "python-multipart>=0.0.9",
+]
+
+# babeldoc(번역 엔진)과 ollama(추론 서버)는 여기 넣지 않는다.
+# babeldoc 은 Python 3.12 전용 도구라 별도 격리 설치(`uv tool install`)가 맞고,
+# 한 환경에 섞으면 onnxruntime·pymupdf 가 충돌한다. ollama 는 파이썬 패키지가
+# 아니다. 둘 다 실행 시점에 `shutil.which` 로 확인하고 설치 방법을 안내한다.
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyflakes>=3"]
+
+[project.scripts]
+pdfko = "pdfko.cli:main"
+pdfko-web = "pdfko.web:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
