@@ -67,7 +67,7 @@ def preflight(src: Path, first: int = 1, last: int | None = None
 
     damaged = looks_damaged(sample)
     if damaged:
-        info("텍스트 레이어 손상 감지 → 합자·글리프 자동 복구를 적용한다")
+        info("텍스트 레이어 손상 감지 → 합자·글리프를 자동 복구합니다")
 
     import shutil as _sh
     if not _sh.which("pdffonts"):
@@ -81,7 +81,7 @@ def preflight(src: Path, first: int = 1, last: int | None = None
         uni_no = sum(1 for l in fonts.splitlines()[2:]
                      if len(l.split()) >= 5 and l.split()[-2] == "no")
         if uni_no:
-            info(f"ToUnicode 없는 폰트 {uni_no}종 — 추출 텍스트가 깨질 수 있다")
+            info(f"ToUnicode 없는 폰트 {uni_no}종 — 추출 텍스트가 깨질 수 있습니다")
     return n, damaged, True
 
 
@@ -294,7 +294,7 @@ def _main(argv: list[str] | None = None) -> int:
     digest = _h.sha256(src.read_bytes()).hexdigest()[:16]
     stamp = work / "source.sha256"
     if stamp.exists() and stamp.read_text().strip() != digest:
-        info("작업 디렉터리에 다른 문서의 기록이 있다 — 구간을 비우고 새로 시작한다")
+        info("작업 폴더에 다른 문서의 기록이 있습니다 — 구간을 비우고 새로 시작합니다")
         _shutil.rmtree(work / "parts", ignore_errors=True)
         (work / "parts").mkdir(parents=True, exist_ok=True)
     stamp.write_text(digest)
@@ -320,7 +320,7 @@ def _main(argv: list[str] | None = None) -> int:
              f"건너뛰었습니다 (예: {', '.join(str(p) for p in unreadable[:5])})")
     hidden = [r for r in scans if r.hidden >= 40]
     if hidden:
-        info(f"가려진 글자가 있는 페이지 {len(hidden)}쪽 — 청소본을 만든다")
+        info(f"가려진 글자가 있는 페이지 {len(hidden)}쪽 — 청소본을 만듭니다")
         cleaned = work / "cleaned.pdf"
         touched, rolled, lost = clipscan.clean(
             src, cleaned, pages=[r.page for r in hidden], min_hidden=40)
@@ -347,7 +347,7 @@ def _main(argv: list[str] | None = None) -> int:
             runner.stop_all()
             probe = runner.Server(work, a.model)
             if probe.identify(probe.pp):
-                info("도는 프록시를 먼저 내린다 (캐시 파일을 쥐고 있다)")
+                info("도는 프록시를 먼저 내립니다 (캐시 파일을 쥐고 있습니다)")
                 time.sleep(2)
             runner.clear_engine_cache()
             for c in chunks:
@@ -358,7 +358,7 @@ def _main(argv: list[str] | None = None) -> int:
             # WAL/SHM 까지 지워야 한다 — 남겨 두면 지운 행이 되살아난다.
             for suffix in ("", "-wal", "-shm"):
                 (work / "cache" / f"trans.db{suffix}").unlink(missing_ok=True)
-            info("엔진 캐시·문단 캐시·구간 표식을 지웠다")
+            info("엔진 캐시·문단 캐시·구간 표식을 지웠습니다")
         else:
             # 엔진 캐시는 우리 미들웨어를 우회하므로 항상 비운다.
             runner.clear_engine_cache()
@@ -382,7 +382,7 @@ def _main(argv: list[str] | None = None) -> int:
             gm_path = work / "glyphmap.json"
             glyphmap.save(gm, gm_path)
             srv_glyphmap = gm_path
-            info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
+            info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았습니다")
 
         # 용어 후보는 서버 기동 전에 뽑아 둔다(추론이 필요 없는 단계).
         auto_terms = []
@@ -423,13 +423,13 @@ def _main(argv: list[str] | None = None) -> int:
                 gpath = work / "용어집.csv"
                 _terms.write_csv(gpath, auto_terms, picked)
                 glossary = gpath
-                info(f"{len(picked)}개 용어의 역어를 고정했다 → {gpath.name}")
+                info(f"{len(picked)}개 용어의 역어를 고정했습니다 → {gpath.name}")
                 for en, ko in list(picked.items())[:5]:
                     info(f"    {en} → {ko}")
                 if len(picked) > 5:
                     info(f"    … 외 {len(picked) - 5}개")
             else:
-                warn("용어 역어를 정하지 못했다 — 용어집 없이 진행한다")
+                warn("용어 역어를 정하지 못했습니다 — 용어집 없이 진행합니다")
 
         srv.user_sig = runner.Server.signature(glossary, a.prompt)
         srv.start_proxy(sys.executable)
@@ -448,8 +448,8 @@ def _main(argv: list[str] | None = None) -> int:
                 c, src, work, model=a.model, proxy_port=srv.pp,
                 glossary=glossary, prompt_file=a.prompt)
             if not ok:
-                warn(f"{c.name} 실패 — logs/part_{c.name}.log 확인. "
-                     f"같은 명령을 다시 실행하면 여기서부터 이어간다.")
+                warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
+                     f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")
                 return 1
 
     step("병합")
@@ -460,8 +460,8 @@ def _main(argv: list[str] | None = None) -> int:
         # 무엇을 해야 하는지 말한다.
         print(f"  {e}")
         if a.recheck:
-            warn("--recheck 는 이미 번역한 결과를 다시 검사하는 옵션이다. "
-                 "먼저 --recheck 없이 한 번 실행할 것")
+            warn("--recheck 는 이미 번역한 결과를 다시 검사하는 옵션입니다. "
+                 "먼저 --recheck 없이 한 번 실행하세요.")
         return 1
     info(f"{n}쪽 → {out.name}")
 
@@ -571,7 +571,7 @@ def _run_pptx(src: Path, a) -> int:
     info(f"슬라이드 {len(prs.slides)}장, 번역할 문단 {len(units)}개"
          + (f" (+ 차트·SmartArt {len(stuck)}개는 번역 불가)" if stuck else ""))
     if not units:
-        warn("번역할 텍스트가 없다")
+        warn("번역할 텍스트가 없습니다")
         return 1
 
     step("서버 확인")

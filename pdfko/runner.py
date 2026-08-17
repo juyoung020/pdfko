@@ -416,7 +416,12 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
     # 실행 전 산출물 목록을 찍어둔다. 이전 실행이 남긴 파일을 보고 성공으로
     # 착각하면 실패한 구간에 .done 이 찍혀 영영 건너뛰게 된다.
     before = {p.name: p.stat().st_mtime for p in chunk.outdir.glob("*.mono.pdf")}
-    with (work / "logs" / f"part_{chunk.name}.log").open("ab") as log:
+    # 실행마다 새로 쓴다. 이어 붙이면 512KB 까지 쌓여서, 문제가 생겼을 때
+    # 어느 실행의 기록인지 찾을 수 없다. 직전 것은 .1 로 남긴다.
+    lp = work / "logs" / f"part_{chunk.name}.log"
+    if lp.exists():
+        lp.replace(lp.with_suffix(".log.1"))
+    with lp.open("wb") as log:
         r = subprocess.run(cmd, stdout=log, stderr=log)
     if r.returncode != 0:
         return False

@@ -113,7 +113,7 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
         if prompt_file and prompt_file.exists():
             cmd += ["--custom-system-prompt", prompt_file.read_text(encoding="utf-8")]
         (work / "logs").mkdir(parents=True, exist_ok=True)
-        with (work / "logs" / f"repair_p{page}.log").open("ab") as log:
+        with (work / "logs" / f"repair_p{page}.log").open("wb") as log:
             r = subprocess.run(cmd, stdout=log, stderr=log)
     finally:
         _mode(False)
