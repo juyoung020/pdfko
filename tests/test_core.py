@@ -411,7 +411,12 @@ def test_stoplist_has_no_content_words():
     content = {"learning", "learn", "method", "system", "problem", "model", "policy",
                "reward", "agent", "state", "value", "action", "function", "network",
                "cell", "gradient", "error", "signal", "control", "search", "solution",
-               "energy", "force", "market", "gene", "protein", "algorithm"}
+               "energy", "force", "market", "gene", "protein", "algorithm",
+               # 숫자·서수·형용사도 안 된다. 이것들이 막고 있던 것:
+               #   second messenger(세포생물학) · first order(수학) · third party(법학)
+               #   next generation(유전체학) · even function(수학) · still image(영상)
+               "one", "two", "three", "four", "five", "first", "second", "third",
+               "next", "last", "even", "still", "just"}
     assert not (STOP & content), STOP & content
 
 
@@ -452,3 +457,51 @@ def test_keep_terms_survives_a_dead_model(monkeypatch):
     monkeypatch.setattr(_u, "urlopen", boom)
     rows = [(9, "value function"), (8, "after")]
     assert terms.keep_terms(rows, port=1, model="m") == rows
+
+
+def test_stemming_asks_the_document_not_a_word_list():
+    """`-s` 로 끝나는 단수 명사를 망가뜨리면 안 된다.
+
+    `bias→bia`, `analysis→analysi`, `physics→physic` 이 되면 문서에 없는
+    문자열이 용어집에 실린다. 그 피해는 생물학·물리학·통계학에만 가고
+    강화학습은 멀쩡하다 — 분야에 따라 결과가 달라지는 바로 그 상태다.
+    예외 목록 대신 **문서에 단수형이 실제로 있는지**로 판단한다.
+    """
+    from pdfko.terms import _norm
+    doc = {"state", "states", "policy", "policies", "channel", "channels",
+           "bias", "analysis", "physics", "species", "lens", "virus", "axis"}
+    assert _norm("states", doc) == "state"          # 단수형이 있으니 접는다
+    assert _norm("policies", doc) == "policy"
+    assert _norm("channels", doc) == "channel"
+    for solo in ("bias", "analysis", "physics", "species", "lens", "virus", "axis"):
+        assert _norm(solo, doc) == solo, solo       # 단수형이 없으니 그대로
+
+
+def test_style_word_in_prose_is_not_rejected():
+    """본문에 `style` 이 정당하게 나오는 문서를 거부하면 안 된다.
+
+    타이포그래피·미술사·CSS 교재가 통째로 3회 재시도 끝에 영어로 남았다.
+    괄호 옆에 붙은 `style` 만 깨진 태그로 본다.
+    """
+    from pdfko import proxy
+    src = "the baroque style of the period"
+    assert proxy.check([{"id": 0, "input": src}],
+                       [{"id": 0, "output": "그 시대의 바로크 style 양식"}])[0]
+    tagged = "a <style id='1'>b</style> c"
+    for broken in ("가 </style〉 나", "가 〈style id='3'> 나"):
+        ok, why = proxy.check([{"id": 0, "input": tagged}],
+                              [{"id": 0, "output": broken}])
+        assert not ok and "style" in why
+
+
+def test_system_prompt_names_no_subject_area():
+    """모든 문단에 붙는 지시문이 분야를 말하면 안 된다.
+
+    한때 "academic machine-learning textbooks" 라고 못박혀 있었다. 용어집은
+    옵션이지만 이 문장은 모든 문서의 모든 문단에 붙는다.
+    """
+    from pdfko import proxy
+    low = (proxy.SYSTEM_PREFIX + proxy.CONCISE_RULE).lower()
+    for field in ("machine-learning", "machine learning", "reinforcement",
+                  "biology", "chemistry", "physics", "law", "medicine"):
+        assert field not in low, field

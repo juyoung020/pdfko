@@ -52,22 +52,46 @@ the a an and or but if then than that this these those of in on at to for with f
 is are was were be been being am it its they them their we us our you your he him his she her
 not no nor can could may might will would shall should must do does did done have has had
 there here when where which who whom whose what how why all any both each either neither
-few more most other others some such only own same so too very just about above below under
+few more most other others some such only own same so too very about above below under
 over between into onto through during before after since until while although though because
-however therefore hence thus also again still even yet than upon within without across among
-per via one two three four five first second third next last another every each""".split())
+however therefore hence thus also again yet than upon within without across among per via
+another every""".split())
+# 여기서 뺀 것들과 그 이유:
+#   one two three four five, first second third — 숫자·서수는 닫힌 부류가 아니고,
+#       다섯에서 자른 것은 문법이 아니라 빈도 맞춤이다. 실제로 `second messenger`
+#       (세포생물학), `first order`(수학·약동학), `third party`(법학), `one hot`(ML),
+#       `two sample`(통계)을 막고 있었다. 강화학습만 아무 손해가 없었다.
+#   next last — 형용사다. `next generation`(유전체학), `last mile`(통신)을 막는다.
+#   even still just — 부사·형용사. `even function`(수학), `still image`(영상),
+#       `just cause`(법학)를 막는다.
+# 흔한 낱말을 거르는 일은 목록이 아니라 모델(`keep_terms`)이 한다.
 
 _WORD = re.compile(r"[^A-Za-z\- ]+")
 
 
-def _norm(t: str) -> str:
-    """복수형을 단수로 접는다. `states` 와 `state` 를 따로 세면 안 된다."""
-    if t.endswith("ies") and len(t) > 4:
+def _norm(t: str, vocab: set[str] | None = None) -> str:
+    """복수형을 단수로 접는다. `states` 와 `state` 를 따로 세면 안 된다.
+
+    **예외 목록을 두지 않는다.** `-s` 로 끝나는 단수 명사는 라틴·그리스계에
+    많고(`bias`, `analysis`, `virus`, `axis`, `species`, `physics`, `lens`),
+    그걸 목록으로 막으려 들면 끝이 없다. 빠뜨리면 `bias→bia`, `physics→physic`
+    이 되어 문서 어디에도 없는 문자열이 용어집에 실린다. 그 피해는 생물학·
+    물리학·통계학에만 가고 강화학습은 멀쩡하다 — 분야에 따라 결과가 달라지는
+    바로 그 상태다.
+
+    그래서 **문서 자신에게 묻는다.** 단수형이 이 문서에 실제로 등장할 때만
+    접는다. `states` 와 `state` 가 함께 나오면 접고, `physics` 만 있고
+    `physic` 이 없으면 그대로 둔다. 어휘 목록이 필요 없고 어느 분야에서나
+    같은 방식으로 동작한다.
+    """
+    if t.endswith("ies") and len(t) > 4 and (vocab is None or t[:-3] + "y" in vocab):
         return t[:-3] + "y"
     if t.endswith("sses") or t.endswith("shes"):
         return t[:-2]
     if t.endswith("s") and not t.endswith("ss") and len(t) > 3:
-        return t[:-1]
+        base = t[:-1]
+        if vocab is None or base in vocab:
+            return base
     return t
 
 
@@ -94,12 +118,15 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
                             italic.update(
                                 _WORD.sub(" ", repair(s.get("text", ""))).lower().split())
 
+    # 단복수 접기의 판단 근거는 **이 문서의 어휘**다. 예외 목록이 아니다.
+    vocab = set(words)
+    nm = lambda w: _norm(w, vocab)                        # noqa: E731
     ok = lambda w: len(w) > 2 and w not in STOP           # noqa: E731
-    bi = Counter(f"{_norm(a)} {_norm(b)}" for a, b in zip(words, words[1:])
+    bi = Counter(f"{nm(a)} {nm(b)}" for a, b in zip(words, words[1:])
                  if ok(a) and ok(b) and a.isalpha() and b.isalpha())
-    hyp = Counter(_norm(w) for w in words
+    hyp = Counter(nm(w) for w in words
                   if "-" in w and 6 < len(w) < 30 and w.strip("-").replace("-", "").isalpha())
-    uni = Counter(_norm(w) for w in words if len(w) > 4 and w not in STOP and w.isalpha())
+    uni = Counter(nm(w) for w in words if len(w) > 4 and w not in STOP and w.isalpha())
 
     # **구를 단일어보다 앞에 둔다.** 어휘 목록으로 거르는 대신 순서로 푼다.
     # 빈도만으로 줄을 세우면 `after`, `better` 같은 흔한 낱말이 `value function`
@@ -113,8 +140,9 @@ def extract(pdf: str | Path, first: int = 1, last: int | None = None,
     strong.sort(key=lambda x: -x[0])
     # 구에 이미 들어 있는 낱말은 단일어로 또 넣지 않는다
     inside = {w for _, p in strong for w in p.replace("-", " ").split()}
+    ital_n = {nm(x) for x in italic}
     weak = sorted(((n, t) for t, n in uni.most_common(top * 4)
-                   if n >= min_count and _norm(t) in {_norm(x) for x in italic}
+                   if n >= min_count and nm(t) in ital_n
                    and t not in inside), key=lambda x: -x[0])
     cand = strong + weak
 

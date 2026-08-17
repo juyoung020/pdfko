@@ -50,6 +50,7 @@ def _mark_reverted(page: pymupdf.Page) -> None:
 
 def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
                      model: str, proxy_port: int, glossary: Path | None,
+                     prompt_file: Path | None = None,
                      concise: bool = True) -> Path | None:
     """한 페이지만 다시 번역한다. 성공하면 그 1쪽짜리 PDF 경로.
 
@@ -99,6 +100,10 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
         ]
         if glossary:
             cmd += ["--glossary-files", str(glossary)]
+        # 사용자가 준 지시문은 여기서도 써야 한다. 예전에는 본 번역에만 붙고
+        # 복구 재번역에서는 조용히 빠져서, 되살린 페이지만 문체가 달라졌다.
+        if prompt_file and prompt_file.exists():
+            cmd += ["--custom-system-prompt", prompt_file.read_text(encoding="utf-8")]
         (work / "logs").mkdir(parents=True, exist_ok=True)
         with (work / "logs" / f"repair_p{page}.log").open("ab") as log:
             r = subprocess.run(cmd, stdout=log, stderr=log)
@@ -222,6 +227,7 @@ def _is_korean(one_page_pdf: Path, floor: float = 0.3) -> bool:
 def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
                  offset: int, src_pdf: Path, work: Path, *,
                  model: str, proxy_port: int, glossary: Path | None,
+                 prompt_file: Path | None = None,
                  on_step=None) -> list[Recovery]:
     """파손된 페이지를 사다리로 되살린다. 1단계 간결 재번역 → 2단계 원문 유지.
 
@@ -241,7 +247,8 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
         got = None
         try:
             got = retranslate_page(v.page, o, src_pdf, work, model=model,
-                                   proxy_port=proxy_port, glossary=glossary)
+                                   proxy_port=proxy_port, glossary=glossary,
+                                   prompt_file=prompt_file)
         except Exception:
             got = None
         if got and _is_korean(got):

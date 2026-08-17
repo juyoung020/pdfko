@@ -456,6 +456,7 @@ def _main(argv: list[str] | None = None) -> int:
                 recs = recover.repair_pages(
                     out, src, severe, offset, src, work,
                     model=a.model, proxy_port=srv.pp, glossary=glossary,
+                    prompt_file=a.prompt,
                     on_step=lambda p, what: info(
                         f"  {p}쪽 {what}" if p else f"  {what}"))
             again = sum(1 for r in recs if r.action == "retranslated")

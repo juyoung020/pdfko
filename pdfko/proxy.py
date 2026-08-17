@@ -119,6 +119,9 @@ CACHE_EPOCH = "2"
 
 PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
 STYLE_RE = re.compile(r"</?style[^>]*>")
+# 괄호 비슷한 문자(전각 포함)에 붙어 있는 `style`. 태그를 쓰려다 만 흔적이다.
+# 본문에 그냥 쓰인 낱말 `style` 은 여기 걸리지 않는다.
+_STYLE_NEAR = re.compile(r"[<〈＜﹤]\s*/?\s*style", re.I)
 LANG_RE = re.compile(r"\bko[-_]KR\b", re.I)
 
 # BabelDOC의 프롬프트가 구조·자리표시자·용어집을 이미 상세히 지시한다.
@@ -129,9 +132,13 @@ LANG_RE = re.compile(r"\bko[-_]KR\b", re.I)
 # 모델이 `Chapter 6` 같은 **제목까지 문장으로 바꿔** "제6장이다" 로 만들면서
 # 그 과정에서 자리표시자를 흡수해 버렸다. 실패의 상당수가 이것이었다.
 # 그래서 문장에만 문어체를 적용하고 제목·캡션은 명사구로 두게 한다.
+# 분야를 **말하지 않는다.** 예전에는 "academic machine-learning textbooks" 라고
+# 못박아 두었다. 이건 용어집 하드코딩보다 나쁘다 — 용어집은 옵션이지만 이
+# 지시문은 모든 문서의 모든 문단에 붙는다. 화학 교재를 넣어도 모델에게
+# "머신러닝 교재를 번역하는 중"이라고 말하는 셈이었다.
 SYSTEM_PREFIX = (
-    "You are a professional English-to-Korean translator for academic "
-    "machine-learning textbooks. Follow the user's instructions and output "
+    "You are a professional English-to-Korean translator for academic and "
+    "technical documents. Follow the user's instructions and output "
     "format exactly.\n"
     "- Full sentences: academic Korean, 문어체 declarative (-이다 / -한다). "
     "Never 존댓말.\n"
@@ -328,9 +335,13 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         # 태그로 인식하지 못해 `</style〉` 가 본문에 글자 그대로 찍힌다.
         # 부분 패턴으로 잡으려다 놓친 적이 있어, **출력에 나오는 모든 'style'이
         # 제대로 된 태그의 일부인지** 를 센다. 하나라도 아니면 거른다.
-        n_style_word = len(re.findall(r"style", tgt, re.I))
+        # 다만 **괄호 비슷한 문자 옆에 있는 `style` 만** 센다. 예전에는 출력에
+        # 나오는 `style` 을 전부 셌는데, 그러면 본문에 그 낱말이 정당하게 등장하는
+        # 문서(타이포그래피·미술사·CSS 교재)가 통째로 거부되고 3회 재시도 끝에
+        # 영어로 남는다. 어느 분야는 되고 어느 분야는 안 되는 상태가 된다.
+        n_style_bracketed = len(_STYLE_NEAR.findall(tgt))
         n_style_tag = len(STYLE_RE.findall(tgt))
-        if n_style_word > n_style_tag:
+        if n_style_bracketed > n_style_tag:
             return False, f"id {iid} malformed style tag"
 
         # <style> 태그는 '경고'까지만 한다.
@@ -616,7 +627,7 @@ async def chat(request: Request):
             v = got.get(str(k))
             if not (isinstance(v, str) and v.strip()):
                 continue
-            if KEEP_RE.search(v) or "style" in v.lower():
+            if KEEP_RE.search(v) or _STYLE_NEAR.search(v):
                 continue
             # 라틴 문자가 8자 넘는 조각인데 한글이 거의 없으면 번역이 아니다.
             if sum(1 for c in runs[k] if c.isalpha() and c.isascii()) >= 8 \
