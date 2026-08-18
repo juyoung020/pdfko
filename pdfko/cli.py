@@ -169,6 +169,21 @@ def _main(argv: list[str] | None = None) -> int:
               "(--recheck 는 번역을 하지 않으므로 캐시를 비울 이유가 없습니다)")
         return 2
 
+    # 없는 용어집·프롬프트를 조용히 무시하면 안 된다. 오타 하나로 용어집이
+    # 빠진 채 500쪽을 돌리고, 사용자는 적용된 줄 안다. 번역 엔진은 없는
+    # 파일을 그냥 무시하고, `Server.signature` 도 OSError 를 삼킨다.
+    for flag, path in (("--glossary", a.glossary), ("--prompt", a.prompt)):
+        if path and not path.expanduser().exists():
+            print(f"{flag} 파일이 없습니다: {path}")
+            return 2
+    if a.glossary:
+        from . import terms as _t
+        why = _t.check_csv(a.glossary.expanduser())
+        if why:
+            print(f"용어집을 쓸 수 없습니다 — {why}")
+            print("  예:  source,target\n       policy,정책")
+            return 2
+
     src = a.pdf.expanduser().resolve()
     if not src.exists():
         print(f"파일이 없습니다: {src}")

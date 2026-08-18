@@ -649,3 +649,39 @@ def test_decide_rejects_letterless_and_placeholder_targets(monkeypatch):
     monkeypatch.setattr(_c, "translate_batch", lambda *a, **k: bad)
     got = terms.decide([(9, f"t{i}") for i in range(5)], port=1, model="m")
     assert got == {}
+
+
+def test_bad_glossary_is_refused_not_ignored(tmp_path):
+    """잘못된 용어집을 조용히 무시하면 안 된다.
+
+    번역 엔진은 헤더가 틀린 CSV 를 말없이 건너뛰고 그냥 번역한다. 사용자는
+    용어집이 적용된 줄 알고 500쪽 결과를 쓰게 된다.
+    """
+    from pdfko import terms
+    good = tmp_path / "g.csv"
+    good.write_text("source,target,tgt_lng\npolicy,정책,\n", encoding="utf-8")
+    assert terms.check_csv(good) == ""
+
+    bad_head = tmp_path / "b.csv"
+    bad_head.write_text("word,korean\npolicy,정책\n", encoding="utf-8")
+    assert "source,target" in terms.check_csv(bad_head)
+
+    empty = tmp_path / "e.csv"
+    empty.write_text("source,target\n", encoding="utf-8")
+    assert terms.check_csv(empty)
+
+    assert terms.check_csv(tmp_path / "nope.csv")      # 없는 파일
+
+
+def test_cli_and_web_sign_glossaries_the_same_way():
+    """지문이 갈리면 같은 책을 명령줄→브라우저로 이어받을 때 캐시가 통째로
+    빗나간다. cli 는 (glossary, prompt), web 은 (glossary) 로 서명하고 있었다."""
+    import inspect
+    from pdfko import cli, web
+    cli_sig = [l for l in inspect.getsource(cli._main).splitlines()
+               if "Server.signature(" in l]
+    web_sig = [l for l in inspect.getsource(web._run).splitlines()
+               if "Server.signature(" in l]
+    assert cli_sig and web_sig
+    n = lambda l: l.count(",") + 1        # noqa: E731  인자 개수
+    assert n(cli_sig[0]) == n(web_sig[0]), (cli_sig, web_sig)

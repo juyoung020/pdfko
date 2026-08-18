@@ -184,7 +184,9 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
                                + ", ".join(f"{k}→{v}"
                                            for k, v in list(picked.items())[:5]))
 
-        srv.user_sig = runner.Server.signature(glossary)
+        # CLI 와 같은 인자로 서명해야 한다. 다르면 같은 책을 명령줄에서
+        # 돌리다 브라우저로 이어받을 때 캐시가 통째로 빗나간다.
+        srv.user_sig = runner.Server.signature(glossary, None)
         srv.start_proxy(__import__("sys").executable)
         # 엔진 캐시는 우리 미들웨어를 통째로 우회한다. 지우지 않으면 검증도
         # 합자 복구도 폭 검사도 거치지 않은 옛 결과가 그대로 나온다.

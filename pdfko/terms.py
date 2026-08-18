@@ -391,3 +391,27 @@ def write_csv(path: Path, rows: list[tuple[int, str]],
             # 넣으면 `off-policy` 는 지정하고 `o↵-policy` 74회는 놓친다.
             for surface in sorted(SURFACES.get(t, {t})) or [t]:
                 w.writerow([surface, ko, ""])
+
+
+def check_csv(path: Path) -> str:
+    """용어집 CSV 가 쓸 수 있는 모양인가. 문제가 없으면 빈 문자열.
+
+    헤더가 틀리면 번역 엔진이 **조용히 무시하고 그냥 진행한다.** 사용자는
+    용어집이 적용된 줄 알고 결과를 쓰게 된다. 웹에만 있던 검사를 여기로
+    옮겨 명령줄에서도 쓴다.
+    """
+    import csv
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as e:
+        return f"읽을 수 없습니다: {e.strerror or e}"
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        return "빈 파일입니다"
+    head = [c.strip().lower() for c in rows[0][:2]]
+    if head[:2] != ["source", "target"]:
+        got = ",".join(rows[0][:3]) if rows[0] else "(빈 줄)"
+        return f"첫 줄이 source,target 이어야 합니다 — 지금은 {got!r}"
+    if len(rows) < 2:
+        return "용어가 한 줄도 없습니다"
+    return ""
