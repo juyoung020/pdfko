@@ -276,6 +276,14 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
                     continue
             except Exception as e:
                 why = f"끼워 넣기 실패: {type(e).__name__}: {e}"
+        # 예외 없이 포기하는 두 경로에도 이유를 남긴다. 앞선 수정은 `except`
+        # 안에서만 이유를 채워서, 재번역이 조용히 None 을 돌려주거나 결과가
+        # 영어로 오는 경우는 여전히 "원문 유지"로만 보고됐다. 둘 다 도구의
+        # 판단이 아니라 **실패**다.
+        if not why:
+            why = ("재번역이 결과를 내지 못했습니다 "
+                   f"(logs/repair_p{v.page}.log 확인)" if got is None else
+                   "재번역 결과가 한국어가 아닙니다 (추론 서버를 확인하세요)")
         give_up.append(v.page)
         notes[v.page] = why
 
@@ -312,7 +320,7 @@ def write_report(path: Path, verdicts: list[PageVerdict],
         for v in broken:
             r = by_page.get(v.page)
             a = {"reverted": "원문 유지", "retranslated": "재번역"}.get(
-                r.action if r else "", "그대로 둠")
+                r.action if r else "", "복구가 실행되지 않음")
             # 복구가 터졌으면 그 오류를 그대로 싣는다. "원문 유지"라고만
             # 적으면 사용자는 도구가 판단해서 그렇게 한 줄 안다.
             if r and r.note:

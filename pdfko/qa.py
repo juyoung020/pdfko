@@ -60,9 +60,17 @@ MIN_WORDS = 15          # 이보다 적으면 판정하지 않는다 (그림·�
 
 
 def _words(page: pymupdf.Page) -> list[tuple[float, float, float, float, str]]:
-    out = []
+    # 되돌린 페이지 하단에 남기는 `[pdfko]` 문구는 본문 상자 밖이라
+    # '영역이탈' 로 잡힌다. 낱말이 적은 페이지에서는 그 9낱말이 31%를 차지해
+    # 다시 심각 판정을 받고, `--recheck` 를 돌릴 때마다 이미 원문인 페이지를
+    # 또 되돌린다. 도구가 제 표시를 파손으로 읽는 셈이다.
+    out, skip = [], False
     for w in page.get_text("words"):
         x0, y0, x1, y1, txt = w[0], w[1], w[2], w[3], w[4]
+        if txt.startswith("[pdfko]"):
+            skip = True                       # 이 줄부터 표시 문구다
+        if skip and y0 > page.rect.y1 - 40:
+            continue
         if txt.strip() and (x1 - x0) > 0 and (y1 - y0) > 0:
             out.append((x0, y0, x1, y1, txt))
     return out

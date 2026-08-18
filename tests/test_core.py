@@ -733,3 +733,74 @@ def test_fragment_mode_rejects_runaway_length():
     sw = proxy.est_width(src)
     assert sw >= 10
     assert proxy.est_width(rebuilt) / sw > proxy.WIDTH_MAX     # 거부 대상이다
+
+
+def test_recovery_failures_carry_a_reason(tmp_path, monkeypatch):
+    """복구가 실패한 것을 "원문 유지"라는 **판단**으로 보고하면 안 된다.
+
+    예외를 던지는 경로만 이유를 남기고 있었다. 조용히 None 을 돌려주거나
+    결과가 영어로 오는 두 경로는 여전히 도구가 판단해서 그렇게 한 것처럼
+    보고됐다. 정직한 보고가 이 도구의 존재 이유다.
+    """
+    import pymupdf
+    from pdfko import qa, recover
+
+    orig = tmp_path / "o.pdf"
+    d = pymupdf.open()
+    for t in ("ONE", "TWO", "THREE"):
+        d.new_page().insert_text((72, 200), t, fontsize=20)
+    d.save(orig); d.close()
+
+    def report_for(fake):
+        trans = tmp_path / f"t{id(fake)}.pdf"
+        shutil.copy(orig, trans)
+        work = tmp_path / f"w{id(fake)}"
+        (work / "logs").mkdir(parents=True)
+        monkeypatch.setattr(recover, "retranslate_page", fake)
+        v = qa.PageVerdict(page=2, words=200)
+        v.overlap, v.reasons = 0.99, ["겹침99%"]
+        recs = recover.repair_pages(trans, orig, [v], 0, orig, work,
+                                    model="m", proxy_port=9, glossary=None)
+        rep = work / "r.md"
+        recover.write_report(rep, [v], recs, 0)
+        return rep.read_text(encoding="utf-8")
+
+    # (a) 예외 없이 None
+    txt = report_for(lambda *a, **k: None)
+    assert "복구 실패" in txt and "원문 유지 |" not in txt
+
+    # (b) 영어 페이지를 돌려줌
+    def english(*a, **k):
+        f = tmp_path / "eng.pdf"
+        d = pymupdf.open(); p = d.new_page(); y = 60
+        for _ in range(20):
+            p.insert_text((50, y), "This page is entirely English text", fontsize=9)
+            y += 18
+        d.save(f); d.close()
+        return f
+    txt = report_for(english)
+    assert "한국어가 아닙니다" in txt
+
+
+def test_marker_does_not_retrigger_reversion(tmp_path):
+    """되돌린 표시를 검사기가 본문으로 세면 `--recheck` 마다 또 되돌린다.
+
+    표시는 9낱말인데 본문 상자 밖이라 '영역이탈' 로 잡힌다. 낱말이 적은
+    페이지에서는 31%를 차지해 계속 심각 판정을 받았다.
+    """
+    import pymupdf
+    from pdfko import qa, recover
+    src = tmp_path / "s.pdf"
+    d = pymupdf.open(); p = d.new_page(); y = 80
+    for i in range(0, 20, 8):
+        p.insert_text((60, y), " ".join(f"word{j}" for j in range(i, i + 8)),
+                      fontsize=10)
+        y += 16
+    d.save(src); d.close()
+
+    marked = tmp_path / "m.pdf"
+    d = pymupdf.open(src); recover._mark_reverted(d[0]); d.save(marked); d.close()
+
+    with pymupdf.open(src) as o, pymupdf.open(marked) as t:
+        v = qa.inspect_page(o[0], t[0], 1)
+    assert not v.broken, v.reasons          # 표시 때문에 다시 파손이 되면 안 된다

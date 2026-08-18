@@ -250,6 +250,10 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
             except Exception as e:
                 job.log.append(f"자동 복구 실패({type(e).__name__}: {e}) — "
                                f"번역본은 그대로 내려받을 수 있습니다")
+                recs = [recover.Recovery(page=v.page, orig_page=v.page + offset,
+                                         reasons=v.reasons, action="",
+                                         note=f"복구 중단: {type(e).__name__}: {e}")
+                        for v in severe]
 
         rep = job.work / "품질보고서.md"
         recover.write_report(rep, verdicts, recs, offset)

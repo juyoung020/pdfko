@@ -527,10 +527,16 @@ def _main(argv: list[str] | None = None) -> int:
             again = sum(1 for r in recs if r.action == "retranslated")
             back = sum(1 for r in recs if r.action == "reverted")
             info(f"재번역으로 살린 {again}쪽, 원문 유지 {back}쪽"
-                 + (" (되돌린 쪽 하단에 표시가 남는다)" if back else ""))
+                 + (" (되돌린 쪽 하단에 표시가 남습니다)" if back else ""))
         except Exception as e:
             warn(f"자동 복구 실패({type(e).__name__}: {e}) — "
-                 f"번역본 {out.name} 은 그대로 쓸 수 있다")
+                 f"번역본 {out.name} 은 그대로 쓸 수 있습니다")
+            # 보고서에도 남긴다. 여기서 버리면 모든 파손 페이지가
+            # "복구가 실행되지 않음" 으로만 찍혀 이유를 알 수 없다.
+            recs = [recover.Recovery(page=v.page, orig_page=v.page + offset,
+                                     reasons=v.reasons, action="",
+                                     note=f"복구 중단: {type(e).__name__}: {e}")
+                    for v in severe]
 
     rep = work / "품질보고서.md"
     recover.write_report(rep, verdicts, recs, offset)
