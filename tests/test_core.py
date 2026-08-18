@@ -804,3 +804,38 @@ def test_marker_does_not_retrigger_reversion(tmp_path):
     with pymupdf.open(src) as o, pymupdf.open(marked) as t:
         v = qa.inspect_page(o[0], t[0], 1)
     assert not v.broken, v.reasons          # 표시 때문에 다시 파손이 되면 안 된다
+
+
+def test_truncated_json_is_recovered_not_discarded():
+    """닫는 괄호 하나 때문에 멀쩡한 번역을 버리면 안 된다.
+
+    실측으로 모델이 **완전하고 올바른** 번역을 내놓고(자리표시자 7개 전부
+    보존, 폭 0.77배, check() 통과) 마지막 `]` 만 빠뜨렸다. 그걸 버려서 세 번의
+    재시도가 전부 실패하고 조각 모드로 떨어졌고, 사람이 읽을 수 없는
+    `v∗흥미로운 점은` 이 페이지에 실렸다.
+    """
+    from pdfko import proxy
+    want = [{"id": 0, "output": "{v1} 에 대한 번역"}]
+    full = '[{"id": 0, "output": "{v1} 에 대한 번역"}]'
+    for cut in (1, 2, 3):                       # ] / }] / "}]
+        assert proxy.parse_output(full[:-cut]) == want, cut
+    # 내용을 지어내지는 않는다
+    assert proxy.parse_output("죄송합니다, 번역할 수 없습니다") is None
+    assert proxy.parse_output('[{"id":0,"outp') is None
+
+
+def test_malformed_style_tag_without_id_is_caught():
+    """`id=` 가 빠진 `<style '5'>` 가 정상 태그로 세어져 통과했다.
+
+    엔진이 인식하지 못하므로 그 문자열이 **본문에 글자 그대로 찍힌다.**
+    실측으로 논문 한 페이지에 7개가 인쇄됐다.
+    """
+    from pdfko import proxy
+    assert proxy.STYLE_RE.match("<style id='5'>")
+    assert proxy.STYLE_RE.match("</style>")
+    assert not proxy.STYLE_RE.match("<style '5'>")
+
+    src = "see (Konda <style id='5'>and</style> Tsitsiklis) for the two-scale"
+    bad = "이중 스케일에 대해서는 (Konda<style '5'>, 치치클리스) 를 참고한다"
+    ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": bad}])
+    assert not ok and "style" in why

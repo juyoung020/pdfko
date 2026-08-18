@@ -120,7 +120,11 @@ def _rules_fingerprint(gm: dict[str, str] | None = None,
 CACHE_EPOCH = "2"
 
 PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
-STYLE_RE = re.compile(r"</?style[^>]*>")
+# 엔진이 실제로 인식하는 태그만 정상으로 센다. `[^>]*` 로 헐겁게 받으면
+# 모델이 `id=` 를 떨어뜨린 `<style '5'>` 도 멀쩡한 태그로 세어져 검사를
+# 통과하고, 그 문자열이 **본문에 글자 그대로 찍힌다.** 실측으로 논문 한
+# 페이지에 7개가 그대로 인쇄됐다.
+STYLE_RE = re.compile(r"</style>|<style\s+id=['\"][^'\"]*['\"]\s*>")
 # 괄호 비슷한 문자(전각 포함)에 붙어 있는 `style`. 태그를 쓰려다 만 흔적이다.
 # 본문에 그냥 쓰인 낱말 `style` 은 여기 걸리지 않는다.
 _STYLE_NEAR = re.compile(r"[<〈＜﹤]\s*/?\s*style", re.I)
@@ -258,7 +262,28 @@ def parse_output(raw: str) -> list | None:
     except json.JSONDecodeError:
         pass
     arr, _, _ = extract_array(t)
-    return arr
+    if arr is not None:
+        return arr
+    # 닫는 괄호만 빠진 응답을 살린다.
+    #
+    # 이게 이 파일에서 가장 값싼 수정이면서 가장 큰 피해를 막는다. 실측으로
+    # 모델이 **완전하고 올바른** 번역을 내놓고(자리표시자 7개 전부 보존,
+    # 폭 0.77배, check() 통과) 마지막 `]` 하나만 빠뜨렸다. 그걸 버리는 바람에
+    # 세 번의 재시도가 전부 실패하고 조각 모드로 떨어져, 사람이 읽을 수 없는
+    # `v∗흥미로운 점은` 이 페이지에 실렸다. 같은 문단을 통짜 경로로 처리한
+    # 다른 실행에서는 멀쩡한 한국어가 나왔다.
+    #
+    # 괄호를 보충해도 JSON 이 성립하지 않으면 그대로 실패한다 — 내용을
+    # 지어내지는 않는다.
+    for tail in ("]", "}]", '"}]', '"}]'):
+        try:
+            arr = json.loads(t + tail)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(arr, list) and arr and isinstance(arr[0], dict):
+            STATS["json_repaired"] += 1
+            return arr
+    return None
 
 
 # ---------------------------------------------------------------- 캐시
@@ -299,7 +324,7 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0,
-         "ligature_dissolved": 0}
+         "ligature_dissolved": 0, "json_repaired": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -587,12 +612,23 @@ async def chat(request: Request):
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"] or ""
 
-    def msgs_for(subset, hint=None):
+    # 용어집 표를 지운다. 표가 "반드시 이 역어를 쓰라"고 못박으면 모델이
+    # 그 낱말을 앞으로 끌어오면서 **자리표시자를 흡수하는** 일이 있다. 검증에서
+    # 실측으로 잡혔고(용어집 있음 0/3, 없음 3/3), 그 결과 통짜 번역이 세 번
+    # 다 실패해 조각 모드로 떨어졌다 — 조각 모드는 어순을 굳혀 훨씬 나쁜
+    # 한국어를 만든다. 마지막 한 번은 용어집 없이 물어본다. 실패한 뒤에만
+    # 도는 길이라 정상 경로에는 영향이 없다.
+    _GLOSS_RE = re.compile(r"\n#+\s*Glossary.*?(?=\n#+\s|\Z)", re.S | re.I)
+
+    def msgs_for(subset, hint=None, drop_glossary=False):
         """배열 자리에 subset 만 끼운 메시지 목록."""
         out = []
         for i, m in enumerate(fixed):
             if i == arr_idx:
-                out.append({**m, "content": swap_array(m["content"], a0, a1, subset)})
+                c = swap_array(m["content"], a0, a1, subset)
+                if drop_glossary:
+                    c = _GLOSS_RE.sub("\n", c)
+                out.append({**m, "content": c})
             elif m.get("role") != "system":
                 out.append(m)
         # prefix 를 써야 한다. SYSTEM_PREFIX 를 직접 쓰면 간결 모드 지시가
@@ -697,7 +733,11 @@ async def chat(request: Request):
         if not pending:
             break
         try:
-            raw = await call(msgs_for(pending, hint), temp, max_tok)
+            # 마지막 시도는 용어집 없이. 용어집이 자리표시자 유실의 원인일 때
+            # 힌트만 더 붙여 봐야 소용이 없다 — 표가 그대로 남아 있기 때문이다.
+            raw = await call(msgs_for(pending, hint,
+                                      drop_glossary=(attempt == len(temps))),
+                             temp, max_tok)
         except Exception as e:
             log_jsonl("errors.jsonl", {"ts": time.time(), "err": repr(e)})
             if attempt == len(temps):
