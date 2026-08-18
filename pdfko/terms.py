@@ -306,7 +306,11 @@ def _translate_terms(items: list[str], port: int, model: str) -> dict[int, str]:
     try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
-            data=json.dumps({"model": model, "temperature": 0.1,
+            # 온도 0. 실행마다 역어가 달라지면(`nonterminal state` 가
+            # 비정상 상태 ↔ 비종결 상태) 용어집 지문이 바뀌고 **문단 캐시가
+            # 통째로 무효화된다.** 같은 명령을 다시 쳤을 뿐인데 처음부터
+            # 다시 번역하게 된다. keep_terms 는 이미 0 이다.
+            data=json.dumps({"model": model, "temperature": 0.0,
                              "max_tokens": 1200,
                              "messages": [{"role": "user", "content": prompt}]}).encode(),
             headers={"Content-Type": "application/json"})

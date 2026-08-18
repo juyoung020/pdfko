@@ -187,12 +187,16 @@ def mixed_language_figures(trans: pymupdf.Page) -> int:
         if block.get("type") != 0:
             continue
         lines = block.get("lines", [])
-        if not (2 <= len(lines) <= 3):
+        # 2~3줄·60자로 좁게 잡았더니 실제 범례를 놓쳤다 — 4줄 65자짜리
+        # `['n = 100, 예상되는 Sarsa', 'n = 1E5, Sarsa', …]` 가 그대로
+        # 통과하면서 보고서는 "파손 0쪽"이라고 찍혔다. 실측으로 490쪽에서
+        # 21%를 놓치고 있었다(19쪽 → 24쪽).
+        if not (2 <= len(lines) <= 8):
             continue                       # 한 줄짜리·긴 문단은 라벨이 아니다
 
         texts = ["".join(s.get("text", "") for s in ln.get("spans", []))
                  for ln in lines]
-        if sum(len(t) for t in texts) > 60:
+        if sum(len(t) for t in texts) > 160:
             continue                       # 라벨치고 너무 길면 본문이다
 
         # 산문은 한 줄 안에 한국어와 영어가 섞인다(용어 병기).
