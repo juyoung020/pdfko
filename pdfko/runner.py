@@ -484,7 +484,15 @@ def merge(chunks: list[Chunk], out: Path) -> int:
     for c in chunks:
         f = c.pdf()
         if f:
-            with pymupdf.open(f) as s:
+            try:
+                s = pymupdf.open(f)
+            except RuntimeError as e:
+                # 어느 구간인지, 무엇을 하면 되는지 말한다. 예전에는
+                # `'/dev/null' is no file` 같은 mupdf 원문만 나왔다.
+                raise RuntimeError(
+                    f"{c.name} 구간 PDF 를 읽을 수 없습니다 ({f.name}): {e}\n"
+                    f"  {c.outdir}/.done 을 지우고 다시 실행하세요") from e
+            with s:
                 # 구간 파일이 **있기만** 하면 통과시키면 안 된다. 엔진이 일부
                 # 페이지만 내놓는 경우가 있고, 그러면 이후 쪽번호가 통째로
                 # 밀린다. 실측: 3쪽 구간이 2쪽만 나온 6쪽 문서에서 마지막
@@ -493,6 +501,15 @@ def merge(chunks: list[Chunk], out: Path) -> int:
                 want = c.last - c.first + 1
                 if s.page_count != want:
                     short.append(f"{c.name}({s.page_count}/{want}쪽)")
+                # 쪽수만 봐서는 부족하다. 파일이 중간에서 잘리면 pymupdf 가
+                # 페이지 트리를 복원해 **쪽수는 맞고 내용은 빈** 문서를
+                # 내놓는다. 실측으로 절반이 잘린 구간이 빈 페이지 3장으로
+                # 병합됐고, 뒤쪽 검사도 전부 통과했다 — qa.coverage 는 글자가
+                # 적은 쪽을 판정 보류로 넘기고 qa.inspect_page 도 마찬가지다.
+                # 빈 책이 "완료 · 파손 0쪽"으로 나간다.
+                elif all(len(s[i].get_text().strip()) < 20
+                         for i in range(s.page_count)):
+                    short.append(f"{c.name}(전 쪽이 비었습니다 — 파일이 잘렸습니다)")
                 doc.insert_pdf(s)
     n = doc.page_count
     if n == 0:
@@ -501,8 +518,9 @@ def merge(chunks: list[Chunk], out: Path) -> int:
     if short:
         doc.close()
         raise RuntimeError(
-            f"구간의 쪽수가 모자란다: {', '.join(short)} — 그대로 합치면 "
-            f"쪽 번호가 어긋난다. 해당 구간의 .done 을 지우고 다시 실행할 것")
+            f"구간이 온전하지 않습니다: {', '.join(short)}\n"
+            f"  그대로 합치면 쪽 번호가 어긋나거나 빈 페이지가 들어갑니다.\n"
+            f"  해당 구간의 .done 을 지우고 다시 실행하세요")
     doc.save(out, garbage=4, deflate=True)
     doc.close()
     return n

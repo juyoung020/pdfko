@@ -264,7 +264,7 @@ def test_merge_rejects_short_chunk(tmp_path):
         for _ in range(npages):
             d.new_page()
         d.save(c.outdir / "x.mono.pdf"); d.close()
-    with pytest.raises(RuntimeError, match="쪽수가 모자란다"):
+    with pytest.raises(RuntimeError, match="온전하지 않습니다"):
         runner.merge(chunks, tmp_path / "out.pdf")
 
 
@@ -685,3 +685,51 @@ def test_cli_and_web_sign_glossaries_the_same_way():
     assert cli_sig and web_sig
     n = lambda l: l.count(",") + 1        # noqa: E731  인자 개수
     assert n(cli_sig[0]) == n(web_sig[0]), (cli_sig, web_sig)
+
+
+def test_merge_refuses_a_truncated_chunk(tmp_path):
+    """잘린 구간은 **쪽수가 맞는 빈 페이지**로 병합된다.
+
+    pymupdf 가 페이지 트리를 복원해 주기 때문에 쪽수 검사를 통과하고, 뒤쪽
+    검사도 전부 통과한다 — qa.coverage 는 글자가 적은 쪽을 판정 보류로
+    넘기고 qa.inspect_page 도 마찬가지다. 빈 책이 "완료 · 파손 0쪽"으로
+    나간다. 실측으로 절반 잘린 구간이 빈 페이지 3장이 됐다.
+    """
+    import pymupdf
+    from pdfko import runner
+    work = tmp_path / "w"
+    (work / "parts").mkdir(parents=True)
+    chunks = runner.plan_chunks(1, 3, 3, work)
+    c = chunks[0]
+    c.outdir.mkdir(parents=True, exist_ok=True)
+    d = pymupdf.open()
+    for i in range(3):
+        d.new_page().insert_text((60, 100), f"본문 {i} " * 30, fontname="korea")
+    f = c.outdir / "x.mono.pdf"
+    d.save(f); d.close()
+
+    assert runner.merge(chunks, tmp_path / "ok.pdf") == 3      # 온전하면 통과
+
+    data = f.read_bytes()
+    f.write_bytes(data[:len(data) // 2])                       # 절반으로 자른다
+    with pytest.raises(RuntimeError) as ei:
+        runner.merge(chunks, tmp_path / "bad.pdf")
+    assert "1-3" in str(ei.value)                              # 어느 구간인지 말한다
+
+
+def test_fragment_mode_rejects_runaway_length():
+    """조각 모드가 길이를 안 보면 원문의 9배짜리 문단이 그대로 나간다.
+
+    사전 조각 경로는 그것을 캐시에까지 넣어, 다시 돌려도 같은 결과가 나왔다.
+    같은 텍스트를 통짜 경로에 넣으면 `width 9.41x` 로 거부된다.
+    """
+    from pdfko import proxy
+    src = " ".join(f"col {{v{i}}} x" for i in range(1, 17))
+    runs, phs = proxy.split_runs(src)
+    long_ko = "이것은 아주 길게 늘어난 한국어 번역문이며 원문보다 훨씬 깁니다"
+    rebuilt = "".join((long_ko if proxy.is_translatable(r) else r)
+                      + (phs[k] if k < len(phs) else "")
+                      for k, r in enumerate(runs))
+    sw = proxy.est_width(src)
+    assert sw >= 10
+    assert proxy.est_width(rebuilt) / sw > proxy.WIDTH_MAX     # 거부 대상이다

@@ -662,6 +662,14 @@ async def chat(request: Request):
         if sum(1 for c in src_txt if c.isalpha() and c.isascii()) >= 8 \
                 and hangul_ratio(rebuilt) < 0.15:
             return None, 0
+        # 길이도 봐야 한다. 조각 모드는 자리표시자와 한글만 검사하고 폭은
+        # 보지 않았다 — 실측으로 원문의 **9.41배**짜리 문단이 그대로 나갔고,
+        # 사전 조각 경로(a)는 그것을 캐시에까지 넣었다. 같은 문단을 통짜
+        # 경로에 넣으면 `width 9.41x` 로 거부되는 바로 그 텍스트다.
+        # 길이 폭주는 페이지를 깨뜨리는 가장 흔한 원인이다.
+        sw = est_width(src_txt)
+        if sw >= 10 and est_width(rebuilt) / sw > WIDTH_MAX:
+            return None, 0
         return rebuilt, hit
 
     # (a) 자리표시자가 아주 많은 문단은 **조각내서** 보낸다.
