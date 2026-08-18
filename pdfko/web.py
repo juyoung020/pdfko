@@ -154,7 +154,7 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         if gm:
             gm_path = job.work / "glyphmap.json"
             glyphmap.save(gm, gm_path)
-            job.log.append(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았다")
+            job.log.append(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았습니다")
 
         job.say("서버 기동", "추론 서버를 켜는 중", 10)
         srv = runner.Server(job.work, "hy-mt2-7b")
@@ -285,7 +285,7 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
     global JOB
     with _lock:
         if JOB and not JOB.done:
-            return JSONResponse({"error": "이미 작업이 돌고 있다"}, status_code=409)
+            return JSONResponse({"error": "이미 다른 작업이 진행 중입니다"}, status_code=409)
         # 파일명은 이름 부분만 취하고, 디렉터리 이름으로 쓸 stem 도 따로 검사한다.
         # `...pdf` 는 stem 이 '..' 이 되어 홈 디렉터리로 탈출했고, 널바이트는 500 을 냈다.
         safe = Path(file.filename or "").name
@@ -382,7 +382,7 @@ async def status():
 @app.get("/download")
 async def download():
     if not (JOB and JOB.out and JOB.out.exists()):
-        return JSONResponse({"error": "결과가 아직 없다"}, status_code=404)
+        return JSONResponse({"error": "결과가 아직 없습니다"}, status_code=404)
     return FileResponse(JOB.out, filename=JOB.out.name,
                         media_type="application/pdf")
 
@@ -390,7 +390,7 @@ async def download():
 @app.get("/report")
 async def report():
     if not (JOB and JOB.report and JOB.report.exists()):
-        return JSONResponse({"error": "보고서가 없다"}, status_code=404)
+        return JSONResponse({"error": "보고서가 없습니다"}, status_code=404)
     return FileResponse(JOB.report, filename=JOB.report.name,
                         media_type="text/markdown")
 

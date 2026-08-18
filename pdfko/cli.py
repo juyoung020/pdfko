@@ -148,9 +148,9 @@ def _main(argv: list[str] | None = None) -> int:
                         "(번역어 칸은 비어 있으니 채워서 --glossary 로 쓰면 된다)")
     p.add_argument("--prompt", type=Path, help="추가 번역 지시문 파일")
     p.add_argument("--no-recover", action="store_true",
-                   help="파손 페이지를 원문으로 되돌리지 않는다")
+                   help="파손 페이지를 원문으로 되돌리지 않습니다")
     p.add_argument("--recheck", action="store_true",
-                   help="번역은 건너뛰고 검사·복구만 다시 한다")
+                   help="번역은 건너뛰고 검사·복구만 다시 합니다")
     p.add_argument("--fresh", action="store_true",
                    help="캐시를 비우고 처음부터 (검증 규칙을 바꿨을 때)")
     a = p.parse_args(argv)
