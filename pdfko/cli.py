@@ -553,9 +553,29 @@ def _main(argv: list[str] | None = None) -> int:
                                      note=f"복구 중단: {type(e).__name__}: {e}")
                     for v in severe]
 
+    # 영어가 남은 쪽은 좌표 판정에 안 걸린다. 겹치지도 밀려나지도 않은 채
+    # 문장만 영어로 남아 있기 때문이다. 따로 훑어 다시 번역한다.
+    if not a.no_recover and not a.recheck:
+        left = recover.leftover_pages(out)
+        if left:
+            step("영어가 남은 쪽 재번역")
+            info(f"{len(left)}쪽")
+            try:
+                more = recover.repair_untranslated(
+                    out, src, offset, src, work,
+                    model=a.model, proxy_port=srv.pp, glossary=glossary,
+                    prompt_file=a.prompt,
+                    on_step=lambda p, what: info(f"  {p}쪽 {what}"))
+                recs += more
+                fixed = sum(1 for r in more if r.action == "retranslated")
+                info(f"{fixed}쪽 살림, {len(more) - fixed}쪽 그대로")
+            except Exception as e:
+                warn(f"재번역 실패({type(e).__name__}: {e}) — "
+                     f"번역본 {out.name} 은 그대로 쓸 수 있습니다")
+
     rep = work / "품질보고서.md"
     recover.write_report(rep, verdicts, recs, offset,
-                         log_dir=work / "logs")
+                         log_dir=work / "logs", out_pdf=out)
 
     runner.stop_all()
     # 엔진이 남긴 중간 산출물은 쪽수에 비례해 쌓인다(3쪽에 13MB).

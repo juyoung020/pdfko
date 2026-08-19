@@ -982,3 +982,102 @@ def test_the_leftover_sentence_is_quoted_back_to_the_model():
     hint = proxy.repair_hint([{"id": 7, "input": src}],
                              [{"id": 7, "output": tgt}])
     assert "The value of a state" in hint, hint
+
+
+def test_report_counts_pages_that_kept_english(tmp_path):
+    """보고서가 "파손 0쪽" 만 말하고 영어 잔류를 숨기면 안 된다."""
+    import pymupdf
+    from pdfko import recover
+    d = pymupdf.open()
+    pg = d.new_page()
+    pg.insert_text((40, 60), "policy is a mapping from states to actions here",
+                   fontsize=9)
+    # pymupdf 기본 폰트에는 한글 글리프가 없다. 내장 CJK 폰트를 써야
+    # 실제로 찍힌다 — 아니면 한글 0자짜리 쪽이 되어 검사가 무의미해진다.
+    pg.insert_text((40, 80), "정책은 상태를 행동으로 사상하는 함수를 뜻한다",
+                   fontsize=9, fontname="korea")
+    out = tmp_path / "t.pdf"
+    d.save(out); d.close()
+
+    rep = tmp_path / "r.md"
+    recover.write_report(rep, [], [], 12, out_pdf=out)
+    body = rep.read_text(encoding="utf-8")
+    assert "영어가 남은 쪽 1쪽" in body, body
+    assert "policy is a mapping" in body, body
+
+
+def test_report_without_the_pdf_still_writes(tmp_path):
+    """out_pdf 를 안 넘겨도 보고서는 나와야 한다 (기존 호출부 보호)."""
+    from pdfko import recover
+    rep = tmp_path / "r.md"
+    recover.write_report(rep, [], [], 0)
+    assert "영어가 남은 쪽 0쪽" in rep.read_text(encoding="utf-8")
+
+
+# ── 미번역 수리 루프 ────────────────────────────────────────────────────
+def test_untranslated_pages_reach_a_repair_loop(tmp_path, monkeypatch):
+    """영어가 남은 쪽은 좌표 판정에 안 걸린다 — 따로 훑어 다시 번역해야 한다.
+
+    예전에는 `repair_pages` 가 `qa.scan` 판정만 받아서, 겹치지도 밀려나지도
+    않은 채 문장만 영어로 남은 쪽은 **수리 루프에 아예 들어가지 않았다.**
+    """
+    import pymupdf
+    from pdfko import recover
+
+    KO = "정책은 상태를 행동으로 사상하는 함수이다"
+    EN = ("a policy maps states to actions and the value function gives "
+          "the expected return from that state onward")
+
+    def mk(path, *, korean, leftover=False):
+        d = pymupdf.open()
+        pg = d.new_page()
+        # `_is_korean` 은 낱말 15개 미만이면 판정을 거절하므로 네 줄을 깐다.
+        # 한국어 줄은 영어 원본보다 **좁아야** 한다 — 넓으면 '영역이탈' 로
+        # 잡혀서, 코드가 아니라 조판 문턱을 시험하게 된다.
+        for k in range(4):
+            pg.insert_text((40, 40 + k * 12), KO if korean else EN,
+                           fontsize=9, fontname="korea" if korean else "helv")
+        if leftover:
+            pg.insert_text((40, 110),
+                           "with general function approximation there is not "
+                           "such a clear notion here", fontsize=9)
+        d.save(path)
+        d.close()
+
+    trans, good, orig = (tmp_path / n for n in ("t.pdf", "g.pdf", "o.pdf"))
+    mk(trans, korean=True, leftover=True)
+    mk(good, korean=True)
+    mk(orig, korean=False)
+
+    assert [p for p, _ in recover.leftover_pages(trans)] == [1]
+    monkeypatch.setattr(recover, "retranslate_page", lambda *a, **k: good)
+    recs = recover.repair_untranslated(trans, orig, 0, orig, tmp_path,
+                                       model="m", proxy_port=1, glossary=None)
+    assert [r.action for r in recs] == ["retranslated"], recs
+    assert not recover.leftover_pages(trans), "갈아 끼운 뒤에도 영어가 남았다"
+
+
+def test_untranslated_repair_never_reverts_to_english(tmp_path, monkeypatch):
+    """재번역이 실패해도 **원문으로 되돌리면 안 된다.**
+
+    90%가 한국어인 쪽을 통째로 영어로 바꾸는 것은 고치는 게 아니라 더
+    나쁘게 만드는 것이다. 있는 그대로 두고 보고서에 적는다.
+    """
+    import pymupdf
+    from pdfko import recover
+    d = pymupdf.open(); pg = d.new_page()
+    pg.insert_text((40, 60), "정책은 상태를 행동으로 사상하는 함수이다",
+                   fontsize=9, fontname="korea")
+    pg.insert_text((40, 80), "with general function approximation there is "
+                             "not such a clear notion here", fontsize=9)
+    trans = tmp_path / "t.pdf"; d.save(trans); d.close()
+    before = trans.read_bytes()
+    orig = tmp_path / "o.pdf"
+    d = pymupdf.open(); d.new_page(); d.save(orig); d.close()
+
+    monkeypatch.setattr(recover, "retranslate_page", lambda *a, **k: None)
+    recs = recover.repair_untranslated(trans, orig, 0, orig, tmp_path,
+                                       model="m", proxy_port=1, glossary=None)
+    assert [r.action for r in recs] == ["kept"], recs
+    assert recs[0].note, "왜 못 고쳤는지 남겨야 한다"
+    assert trans.read_bytes() == before, "원문으로 되돌려 버렸다"

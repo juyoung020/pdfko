@@ -254,9 +254,24 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
                                          note=f"복구 중단: {type(e).__name__}: {e}")
                         for v in severe]
 
+        # 영어가 남은 쪽은 좌표 판정에 안 걸린다. 겹치지도 밀려나지도 않은 채
+        # 문장만 영어로 남아 있기 때문이다. 따로 훑어 다시 번역한다.
+        left = recover.leftover_pages(out)
+        if left:
+            job.say("영어가 남은 쪽 재번역", f"{len(left)}쪽", 97)
+            try:
+                recs += recover.repair_untranslated(
+                    out, src, offset, src, job.work,
+                    model="hy-mt2-7b", proxy_port=srv.pp, glossary=glossary,
+                    on_step=lambda p, what: job.say(
+                        "영어가 남은 쪽 재번역", f"{p}쪽 {what}", 97))
+            except Exception as e:
+                job.log.append(f"재번역 실패({type(e).__name__}: {e}) — "
+                               f"번역본은 그대로 내려받을 수 있습니다")
+
         rep = job.work / "품질보고서.md"
         recover.write_report(rep, verdicts, recs, offset,
-                             log_dir=job.work / "logs")
+                             log_dir=job.work / "logs", out_pdf=out)
         job.out, job.report = out, rep
         # 엔진 중간 산출물은 쪽수에 비례해 쌓인다. 결과와 보고서는 남기고
         # work/ 만 지운다. 사용자가 만든 번역본을 지우지는 않는다.

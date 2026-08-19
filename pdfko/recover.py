@@ -332,20 +332,154 @@ def _fragment_note(log_dir: Path) -> list[str]:
     return out
 
 
+def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
+                        src_pdf: Path, work: Path, *, model: str,
+                        proxy_port: int, glossary: Path | None,
+                        prompt_file: Path | None = None,
+                        on_step=None) -> list[Recovery]:
+    """영어가 남은 페이지를 **다시 번역해서** 되살린다.
+
+    ## 왜 따로 있어야 하나
+
+    `repair_pages` 는 `qa.scan` 의 좌표 판정만 받는다. 겹치지도 밀려나지도
+    않은 채 영어 문장만 남은 페이지는 그 판정에 걸리지 않으므로 수리 루프에
+    **아예 들어가지 않았다.** 프록시가 문단 단위로 재시도를 다 쓰고 포기하면
+    그걸로 끝이었다.
+
+    ## 왜 되돌리지 않나
+
+    `repair_pages` 의 2단계는 '원문 유지'다. 여기서는 쓰면 안 된다. 90%가
+    한국어인 쪽을 통째로 영어로 바꾸는 것은 고치는 게 아니라 **더 나쁘게
+    만드는 것**이다. 재번역이 실패하면 있는 그대로 두고 보고서에 적는다.
+
+    ## 왜 간결 모드를 쓰지 않나
+
+    간결 모드는 '길어서 자리가 없다'는 문제를 푼다. 여기 문제는 길이가
+    아니라 번역이 안 된 것이라, 짧게 쓰라고 하면 오히려 내용을 잃는다.
+    """
+    rows = leftover_pages(trans_pdf)
+    recs: list[Recovery] = []
+    for page, run in rows:
+        o = page + offset
+        if on_step:
+            on_step(page, "영어 잔류 — 재번역")
+        got, why = None, ""
+        try:
+            got = retranslate_page(page, o, src_pdf, work, model=model,
+                                   proxy_port=proxy_port, glossary=glossary,
+                                   prompt_file=prompt_file, concise=False)
+        except Exception as e:
+            why = f"재번역 실패: {type(e).__name__}: {e}"
+        if got and _is_korean(got):
+            try:
+                # 갈아 끼우기 전에 확인한다. 영어가 그대로면 끼울 이유가 없고,
+                # 레이아웃이 깨졌다면 오히려 나빠진다.
+                with pymupdf.open(got) as g:
+                    still = _leftover_english(g[0].get_text())
+                if not still:
+                    splice_page(trans_pdf, page, got, trans_pdf)
+                    with pymupdf.open(trans_pdf) as t, pymupdf.open(orig_pdf) as s:
+                        again = qa.inspect_page(s[o - 1], t[page - 1], page)
+                    if not _is_severe(again):
+                        recs.append(Recovery(page=page, orig_page=o,
+                                             reasons=[f"영어 잔류: {run[:40]}"],
+                                             action="retranslated"))
+                        continue
+                    why = "재번역했으나 레이아웃이 깨져 되돌림"
+                else:
+                    why = "재번역해도 영어가 남음"
+            except Exception as e:
+                why = f"끼워 넣기 실패: {type(e).__name__}: {e}"
+        recs.append(Recovery(page=page, orig_page=o,
+                             reasons=[f"영어 잔류: {run[:40]}"],
+                             action="kept",
+                             note=why or "재번역이 한국어를 내놓지 못함"))
+    return recs
+
+
+def _leftover_english(text: str) -> str | None:
+    from .proxy import leftover_english
+    return leftover_english(text)
+
+
+def leftover_pages(out_pdf: Path) -> list[tuple[int, str]]:
+    """번역이 됐는데 영어 문장이 통째로 남은 페이지. [(쪽, 남은 문장)]
+
+    쪽 단위 미번역 검사(`qa.coverage`)로는 안 보인다. 한 쪽이 80% 한국어면
+    남은 영어 한 문장은 그 검사를 통과한다 — 실측으로 출고본 490쪽이
+    "미번역 0쪽" 으로 찍혔는데 실제로는 145쪽에 영어 문장이 남아 있었다.
+    프록시가 재시도로 대부분 잡지만, 다 잡지 못한 것은 세어서 알려야 한다.
+    """
+    rows: list[tuple[int, str]] = []
+    try:
+        with pymupdf.open(out_pdf) as d:
+            for i in range(d.page_count):
+                run = _leftover_english(_body_text(d[i]))
+                if run:
+                    rows.append((i + 1, run))
+    except Exception:
+        return []
+    return rows
+
+
+# 머리글·쪽번호가 사는 띠. 위아래 8% 를 본문에서 뺀다.
+_MARGIN = 0.08
+
+
+def _body_text(page: pymupdf.Page) -> str:
+    """머리글과 쪽번호를 뺀 본문 텍스트.
+
+    번역 엔진은 반복되는 머리글(`Chapter 8: Planning and Learning with
+    Tabular Methods`)을 번역하지 않고 그대로 둔다. 그 자체가 아쉬운 점이지만
+    **이 수리 루프가 고칠 수 있는 것이 아니다** — 다시 돌려도 엔진은 같은
+    이유로 또 건너뛴다. 여기 넣어 두면 책의 거의 모든 쪽이 매번 재번역
+    대상이 되어 수리가 끝나지 않는다. 실측으로 30쪽 중 14쪽이 머리글
+    하나 때문에 걸렸고, 본문에 실제로 영어가 남은 쪽은 1쪽이었다.
+    """
+    r = page.rect
+    lo, hi = r.y0 + r.height * _MARGIN, r.y1 - r.height * _MARGIN
+    out = []
+    for b in page.get_text("blocks"):
+        y0, y1, txt = b[1], b[3], b[4]
+        if y1 < lo or y0 > hi:
+            continue
+        out.append(txt)
+    return "\n".join(out)
+
+
+def _leftover_note(rows: list[tuple[int, str]], offset: int) -> list[str]:
+    if not rows:
+        return []
+    out = ["## 영어가 남은 페이지", "",
+           f"아래 {len(rows)}쪽은 대부분 번역됐지만 영어 문장이 남아 있습니다. "
+           "재시도를 다 쓰고도 한국어가 나오지 않은 문단입니다.", "",
+           "| 번역본 쪽 | 원본 쪽 | 남은 문장 |", "|---|---|---|"]
+    for p, run in rows[:12]:
+        out.append(f"| {p} | {p + offset} | "
+                   f"{run[:60].replace('|', '/')}… |")
+    if len(rows) > 12:
+        out.append(f"| … | | 외 {len(rows) - 12}쪽 |")
+    out.append("")
+    return out
+
+
 def write_report(path: Path, verdicts: list[PageVerdict],
                  recoveries: list[Recovery], offset: int,
-                 log_dir: Path | None = None) -> None:
+                 log_dir: Path | None = None,
+                 out_pdf: Path | None = None) -> None:
     """무엇이 어떻게 처리됐는지 사람이 읽을 수 있게 남긴다.
 
     조용히 넘어가지 않는 것이 이 파일의 존재 이유다.
     """
     broken = [v for v in verdicts if v.broken]
+    left = leftover_pages(out_pdf) if out_pdf else []
     lines = [
         "# 번역 품질 보고서",
         "",
         f"- 전체 {len(verdicts)}쪽",
         f"- 파손 감지 {len(broken)}쪽",
         f"- 원문으로 되돌림 {sum(1 for r in recoveries if r.action == 'reverted')}쪽",
+        f"- 영어가 남은 쪽 {len(left)}쪽",
         "",
     ]
     if broken:
@@ -372,6 +506,7 @@ def write_report(path: Path, verdicts: list[PageVerdict],
         lines += [f"- {r.page}쪽 — {r.note}" for r in failed]
         lines.append("")
 
+    lines += _leftover_note(left, offset)
     if log_dir:
         lines += _fragment_note(log_dir)
 
