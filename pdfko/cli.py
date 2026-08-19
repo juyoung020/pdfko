@@ -407,6 +407,14 @@ def _main(argv: list[str] | None = None) -> int:
         # 뽑을 수 없다 — BabelDOC 은 그것들을 user 메시지 안에 말아 넣는다.
         srv.start_ollama()
         info(f"추론 서버 :{srv.op}")
+        # 이미 떠 있던 서버를 빌려 쓰면 모델 저장소도 그 서버 것이다.
+        # 모른 척하면 "등록은 한 번이면 된다"는 약속이 조용히 깨진다 —
+        # 다음에 우리가 서버를 띄우면 다른 저장소를 보면서 모델이 없다고 하고,
+        # 사용자가 다시 등록하면 똑같은 6GB 가 한 벌 더 생긴다.
+        if srv.borrowed:
+            st = srv.model_store()
+            if st and st.resolve() != runner.MODEL_STORE.resolve():
+                info(f"  이미 떠 있는 ollama 를 씁니다 — 모델 저장소는 {st}")
         if a.gguf:
             runner.ensure_model(work, a.gguf.resolve(), a.model, srv.op)
             info(f"모델 등록 {a.model}")

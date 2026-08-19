@@ -60,7 +60,7 @@ pdfko book.pdf
 |---|---|---|
 | **그래픽카드** | VRAM 8GB | VRAM **12GB** 이상 |
 | RAM | 16GB | 32GB |
-| 디스크 | 25GB (모델 12GB 포함) | |
+| 디스크 | 20GB (모델 6GB 포함) | |
 | Python | 3.12 이상 | |
 
 번역 모델이 GPU에 통째로 올라가려면 **8.3GB**가 필요합니다. 12GB 카드면 여유 있게 들어가고, 8GB 카드는 일부가 CPU로 밀려 **2~3배 느려집니다**. GPU 없이 CPU만으로는 500쪽에 며칠이 걸려 사실상 어렵습니다.
@@ -218,7 +218,7 @@ sudo apt install fonts-noto-cjk
 OLLAMA_HOST=127.0.0.1:11500 ollama list
 ```
 
-`hy-mt2-7b` 가 안 보이면 `pdfko book.pdf --gguf ~/models/HY-MT2-7B-Q6_K.gguf` 로 한 번 등록하세요. 등록은 한 번이면 되고, 이후 모든 책에서 쓰입니다.
+`hy-mt2-7b` 가 안 보이면 `pdfko book.pdf --gguf ~/models/HY-MT2-7B-Q6_K.gguf` 로 한 번 등록하세요. 모델은 ollama 기본 위치(`~/.ollama/models`)에 저장되므로 등록은 한 번이면 되고, 이후 모든 책에서 쓰입니다.
 
 ## 어떻게 만들어졌나
 

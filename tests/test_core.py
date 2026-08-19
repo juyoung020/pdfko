@@ -869,3 +869,32 @@ def test_engine_cache_is_bypassed_not_deleted():
     assert "--ignore-cache" in inspect.getsource(runner.translate_chunk)
     assert "--ignore-cache" in inspect.getsource(recover.retranslate_page)
     assert not hasattr(runner, "ENGINE_CACHE")     # 지울 대상 자체가 없다
+
+
+def test_model_store_is_ollama_default_not_ours():
+    """우리만의 폴더를 쓰면 저장소가 갈라져 같은 6GB 가 두 벌 생긴다.
+
+    사용자가 `ollama serve` 를 이미 띄워 놨으면 그 서버는 자기 저장소를
+    보는데, 우리가 나중에 서버를 띄우면 우리 폴더를 보며 "모델이 없다"고
+    한다. 다시 등록하면 사본이 하나 더 생긴다. 실측으로 이 컴퓨터에 같은
+    blob 해시를 가진 저장소가 두 개, 11.6GB 쌓여 있었다.
+    """
+    from pathlib import Path
+    from pdfko import runner
+    assert runner.MODEL_STORE == Path.home() / ".ollama" / "models"
+    # 작업 폴더 안이면 책마다 한 벌씩 생긴다
+    for probe in (Path("/tmp/a_ko"), Path("/tmp/b_ko")):
+        assert probe not in runner.MODEL_STORE.parents
+
+
+def test_ensure_model_does_not_pretend_to_pick_the_store():
+    """`OLLAMA_MODELS` 를 클라이언트에서 정해 봐야 소용없다.
+
+    `ollama create`/`list` 는 서버 쪽 동작이라 클라이언트 환경변수를 보지
+    않는다. 실측으로 없는 경로를 줘도 서버 저장소 목록이 그대로 나왔다.
+    그 줄이 남아 있으면 통제하지 못하는 것을 통제하는 척하게 된다.
+    """
+    import inspect
+    from pdfko import runner
+    src = inspect.getsource(runner.ensure_model)
+    assert "OLLAMA_MODELS" not in src

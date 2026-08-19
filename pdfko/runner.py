@@ -64,12 +64,17 @@ def plan_chunks(first: int, last: int, size: int, root: Path) -> list[Chunk]:
     return out
 
 
-# 모델 저장소는 **사용자 공용**이다. 작업 폴더 안에 두면 책마다 저장소가
-# 새로 생겨서, `--gguf` 로 한 번 등록해도 다음 책에서는 없는 모델이 된다.
-# 그때 엔진은 영어를 그대로 내놓고 성공을 보고한다. 게다가 6GB 짜리 사본이
-# 책 수만큼 쌓인다. 실측으로 첫 사용자가 정확히 이 함정에 빠졌다.
+# 모델 저장소는 **ollama 자신의 기본 위치**를 쓴다.
+#
+# 우리만의 폴더를 쓰면 저장소가 갈라진다. 사용자가 `ollama serve` 를 이미
+# 띄워 놨으면 그 서버는 자기 저장소(`~/.ollama/models`)를 보는데, 우리가
+# 나중에 서버를 띄우면 우리 폴더를 보면서 "모델이 없다" 고 한다. 사용자가
+# 다시 등록하면 **똑같은 6GB 가 한 벌 더 생긴다.** 실측으로 이 컴퓨터에
+# 같은 blob 해시를 가진 저장소가 두 개, 11.6GB 쌓여 있었다.
+#
+# 예전에는 작업 폴더 안(`<work>/models/ollama`)이라 책마다 한 벌씩 생겼다.
 MODEL_STORE = Path(
-    os.environ.get("PDFKO_MODELS", Path.home() / ".pdfko" / "ollama"))
+    os.environ.get("PDFKO_MODELS", Path.home() / ".ollama" / "models"))
 
 
 # 이 프로세스가 띄운 서버들. 어떤 경로로 끝나든 stop_all() 로 정리한다.
@@ -91,6 +96,7 @@ class Server:
         self.pp = proxy_port
         self.glyphmap: Path | None = None   # 깨진 합자 사전 (cli 가 채운다)
         self.user_sig: str = ""             # 용어집·프롬프트 지문 (cli 가 채운다)
+        self.borrowed = False               # 이미 떠 있던 ollama 를 빌려 쓰는가
         self._procs: list[subprocess.Popen] = []
         _LIVE.append(self)
 
@@ -204,8 +210,37 @@ class Server:
         raise RuntimeError(f"빈 포트를 찾지 못했다 ({start}~{start + tries})")
 
     # ---------------------------------------------------------------- 기동
+    def model_store(self) -> Path | None:
+        """지금 그 포트에서 도는 서버가 실제로 쓰는 저장소.
+
+        우리가 띄운 서버가 아니면 우리가 정한 값과 다를 수 있다. 그걸
+        모른 척하면 "등록은 한 번이면 된다"는 약속이 조용히 깨진다.
+        """
+        import re as _re
+        pid = self._ollama_pid()
+        if pid is None:
+            return None
+        try:
+            env = Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace")
+        except OSError:
+            return None
+        m = _re.search(r"OLLAMA_MODELS=([^\x00]+)", env)
+        return Path(m.group(1)) if m else Path.home() / ".ollama" / "models"
+
+    def _ollama_pid(self) -> int | None:
+        import subprocess as _sp
+        out = _sp.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if f":{self.op} " in line and "pid=" in line:
+                try:
+                    return int(line.split("pid=")[1].split(",")[0])
+                except (IndexError, ValueError):
+                    return None
+        return None
+
     def start_ollama(self) -> None:
         if self.ollama_up():
+            self.borrowed = True      # 우리가 띄운 게 아니다 — 저장소도 남의 것
             return
         # 부모 환경을 물려준다. 예전에는 PATH/HOME 만 넘겼는데, 그러면
         # CUDA_VISIBLE_DEVICES·LD_LIBRARY_PATH 가 사라져 ollama 가 조용히
@@ -359,9 +394,12 @@ def ensure_model(work: Path, gguf: Path, tag: str, ollama_port: int) -> None:
     그러면 모델이 구조 없는 생 텍스트를 받아 **완전한 횡설수설**을 출력한다.
     `ollama show <tag> --template` 이 `{{ .Prompt }}` 만 보이면 이 증상이다.
     """
+    # `OLLAMA_MODELS` 를 여기서 정해 봐야 소용없다. `ollama create` 와
+    # `ollama list` 는 둘 다 **서버 쪽** 동작이라 클라이언트 환경변수를 보지
+    # 않는다. 실측으로 없는 경로를 줘도 서버 저장소의 목록이 그대로 나왔다.
+    # 등록은 지금 그 포트에서 도는 서버의 저장소로 들어간다.
     env = dict(os.environ)
     env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
-    env["OLLAMA_MODELS"] = str(MODEL_STORE)
     have = subprocess.run(["ollama", "list"], env=env,
                           capture_output=True, text=True).stdout
     if tag in have:
