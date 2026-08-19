@@ -130,6 +130,24 @@ STYLE_RE = re.compile(r"</style>|<style\s+id=['\"][^'\"]*['\"]\s*>")
 _STYLE_NEAR = re.compile(r"[<〈＜﹤]\s*/?\s*style", re.I)
 LANG_RE = re.compile(r"\bko[-_]KR\b", re.I)
 
+# 존댓말 어미. 지시문에서 금지하는데도 새어 나온다 — 출고본 490쪽에서 8곳,
+# 미리보기 한 쪽에서는 5%까지 올라갔다. 한 화면 안에서 문체가 바뀌면
+# 번역기 티가 난다. 지시만 하지 말고 검사해서 다시 시킨다.
+_JONDAE_RE = re.compile(r"(?:습니다|합니다|입니다|됩니다|십시오|하세요|"
+                        r"이에요|예요|드립니다|주세요)\s*[.!?)\]]?\s*$")
+
+# 의사코드 제어 낱말. 이건 분야 어휘가 아니라 **의사코드 표기법**이다 —
+# 어느 분야 교재든 알고리즘 상자에 똑같이 나온다.
+#
+# 번역하면 오히려 나빠진다. 실측으로 `until Δ < θ` 가 `유한한 <θ까지` 가
+# 됐다(490쪽에 15곳). `유한한` 은 finite 라는 뜻이라 조건문이 형용사가 된
+# 것이고, 코드로 옮기면 돌지 않는다. 영어로 두는 편이 낫다.
+_CODE_WORDS = {
+    "loop", "until", "while", "for", "do", "end", "if", "then", "else",
+    "elif", "repeat", "return", "input", "output", "initialize", "init",
+    "foreach", "break", "continue", "function", "procedure", "algorithm",
+}
+
 # BabelDOC의 프롬프트가 구조·자리표시자·용어집을 이미 상세히 지시한다.
 # 여기서는 그 지시와 싸우지 않으면서 문체만 못박는다.
 # 바이트 단위로 불변이라 추론 서버의 프롬프트 접두사 캐시가 그대로 산다.
@@ -324,7 +342,7 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0,
-         "ligature_dissolved": 0, "json_repaired": 0}
+         "ligature_dissolved": 0, "json_repaired": 0, "code_kept": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -387,6 +405,10 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         # 이걸로 거부하면 멀쩡한 번역까지 버리고 원문으로 폴백하게 된다.
         if len(STYLE_RE.findall(src)) != len(STYLE_RE.findall(tgt)):
             STATS["style_dropped"] += 1
+
+        # 문체가 섞이면 안 된다. 지시문에서 금지하지만 새어 나온다.
+        if _JONDAE_RE.search(tgt.strip()):
+            return False, f"id {iid} 존댓말"
 
         # 번역할 산문이 있었는데 한글이 없으면 반향이다
         letters = sum(1 for c in src if c.isalpha() and c.isascii())
@@ -707,6 +729,15 @@ async def chat(request: Request):
         if sw >= 10 and est_width(rebuilt) / sw > WIDTH_MAX:
             return None, 0
         return rebuilt, hit
+
+    # 의사코드 제어 낱말뿐인 항목은 그대로 돌려준다. 번역하면 조건문이
+    # 형용사가 되어 오히려 못 읽게 된다.
+    for it in items:
+        src_t = it.get("input", "")
+        words = re.findall(r"[A-Za-z]+", PLACEHOLDER_RE.sub(" ", STYLE_RE.sub(" ", src_t)))
+        if words and all(w.lower() in _CODE_WORDS for w in words):
+            results[str(it.get("id"))] = src_t
+            STATS["code_kept"] += 1
 
     # (a) 자리표시자가 아주 많은 문단은 **조각내서** 보낸다.
     #     `{v1}` 사이의 본문만 번역하고 자리표시자는 우리가 원위치에 다시 끼운다.

@@ -928,3 +928,41 @@ def test_fragment_mode_is_reported_not_just_counted(tmp_path):
     recover.write_report(rep2, [qa.PageVerdict(page=1, words=100)], [], 0,
                          log_dir=tmp_path / "nologs")
     assert "어순이 고정된 문단" not in rep2.read_text(encoding="utf-8")
+
+
+def test_honorific_endings_are_rejected():
+    """한 화면 안에서 문체가 바뀌면 번역기 티가 난다.
+
+    지시문에서 존댓말을 금지하는데도 새어 나왔다 — 출고본 490쪽에 8곳,
+    미리보기 한 쪽에서는 5%까지. 지시만 하지 말고 검사해서 다시 시킨다.
+    """
+    from pdfko import proxy
+    src = "the policy improves the value estimate over time here"
+    for bad in ("정책을 개선합니다.", "이것이 최적입니다", "값을 갱신해 주세요"):
+        ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": bad}])
+        assert not ok and "존댓말" in why, bad
+    for good in ("정책을 개선한다.", "가치 함수", "상태 전이 확률"):
+        ok, _ = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": good}])
+        assert ok, good
+
+
+def test_pseudocode_keywords_stay_english():
+    """`until Δ < θ` 를 번역하면 조건문이 형용사가 된다.
+
+    실측으로 `유한한 <θ까지` 가 됐다(490쪽에 15곳). `유한한` 은 finite 라는
+    뜻이다. 코드로 옮기면 돌지 않는다. 영어로 두는 편이 낫다.
+
+    분야 어휘가 아니라 **의사코드 표기법**이다 — 어느 분야 교재든 알고리즘
+    상자에 똑같이 나온다.
+    """
+    import re
+    from pdfko import proxy
+    def only_code(src):
+        w = re.findall(r"[A-Za-z]+",
+                       proxy.PLACEHOLDER_RE.sub(" ", proxy.STYLE_RE.sub(" ", src)))
+        return bool(w) and all(x.lower() in proxy._CODE_WORDS for x in w)
+    for keep in ("until {v1}", "end for", "Loop", "repeat", "if {v1} then"):
+        assert only_code(keep), keep
+    for translate in ("The agent selects an action", "Initialize {v1} arbitrarily",
+                      "Loop for each step of episode"):
+        assert not only_code(translate), translate
