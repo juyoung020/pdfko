@@ -136,29 +136,6 @@ LANG_RE = re.compile(r"\bko[-_]KR\b", re.I)
 _JONDAE_RE = re.compile(r"(?:습니다|합니다|입니다|됩니다|십시오|하세요|"
                         r"이에요|예요|드립니다|주세요)\s*[.!?)\]]?\s*$")
 
-# 의사코드 제어 낱말. **이 파일에서 유일한 낱말 목록이므로** 왜 예외인지
-# 분명히 해 둔다.
-#
-# 분야 어휘가 아니라 **영어 프로그래밍 표기법**이다. `policy`·`value function`
-# 같은 것을 목록에 넣으면 그 순간 강화학습 전용 도구가 되지만, `until`·
-# `end for` 는 어느 분야 교재든 알고리즘 상자에 똑같이 나온다. STOP 에 관사와
-# 전치사를 넣는 것과 같은 부류다 — 주제가 아니라 언어에 대한 사실.
-#
-# **모델에게 맡겨 봤지만 안 됐다.** 지시문에 "의사코드 제어 낱말은 영어로
-# 두라"고 예시까지 들어 적고 재보니 4개 중 1개만 지켰고, 더 나쁘게는
-# `until` 을 `~하는 동안`(while)으로 **뜻을 뒤집었다.** 목록은 4개 다 맞다.
-#
-# 번역하면 실제로 나빠진다. 출고본 490쪽에서 `until` 이 `유한한`(finite)이
-# 되어 조건문이 형용사가 된 곳이 15군데였다. 코드로 옮기면 돌지 않는다.
-#
-# 실측 발동률: 실제 번역 항목 918개 중 2개(0.22%), 둘 다 진짜 의사코드
-# (`until {v1}`, `Loop:`). 오탐 0.
-_CODE_WORDS = {
-    "loop", "until", "while", "for", "do", "end", "if", "then", "else",
-    "elif", "repeat", "return", "input", "output", "initialize", "init",
-    "foreach", "break", "continue", "function", "procedure", "algorithm",
-}
-
 # BabelDOC의 프롬프트가 구조·자리표시자·용어집을 이미 상세히 지시한다.
 # 여기서는 그 지시와 싸우지 않으면서 문체만 못박는다.
 # 바이트 단위로 불변이라 추론 서버의 프롬프트 접두사 캐시가 그대로 산다.
@@ -353,7 +330,7 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0,
-         "ligature_dissolved": 0, "json_repaired": 0, "code_kept": 0}
+         "ligature_dissolved": 0, "json_repaired": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -740,20 +717,6 @@ async def chat(request: Request):
         if sw >= 10 and est_width(rebuilt) / sw > WIDTH_MAX:
             return None, 0
         return rebuilt, hit
-
-    # 의사코드 제어 낱말뿐인 항목은 그대로 돌려준다. 번역하면 조건문이
-    # 형용사가 되어 오히려 못 읽게 된다.
-    for it in items:
-        src_t = it.get("input", "")
-        # 길이 제한을 둔다. 의사코드 한 줄은 짧다 — 실측으로 발동한 항목이
-        # 11자와 5자, 전체 항목 중앙값은 39자였다. 긴 산문이 우연히 제어
-        # 낱말로만 이루어질 일은 없으므로, 상한을 두면 공짜로 안전해진다.
-        if len(src_t) > 48:
-            continue
-        words = re.findall(r"[A-Za-z]+", PLACEHOLDER_RE.sub(" ", STYLE_RE.sub(" ", src_t)))
-        if words and all(w.lower() in _CODE_WORDS for w in words):
-            results[str(it.get("id"))] = src_t
-            STATS["code_kept"] += 1
 
     # (a) 자리표시자가 아주 많은 문단은 **조각내서** 보낸다.
     #     `{v1}` 사이의 본문만 번역하고 자리표시자는 우리가 원위치에 다시 끼운다.
