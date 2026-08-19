@@ -4,6 +4,7 @@
 속였던 버그를 다시 잡는다.
 """
 
+from pathlib import Path
 import re
 import shutil
 
@@ -990,11 +991,11 @@ def test_report_counts_pages_that_kept_english(tmp_path):
     from pdfko import recover
     d = pymupdf.open()
     pg = d.new_page()
-    pg.insert_text((40, 60), "policy is a mapping from states to actions here",
+    pg.insert_text((40, 300), "policy is a mapping from states to actions here",
                    fontsize=9)
     # pymupdf 기본 폰트에는 한글 글리프가 없다. 내장 CJK 폰트를 써야
     # 실제로 찍힌다 — 아니면 한글 0자짜리 쪽이 되어 검사가 무의미해진다.
-    pg.insert_text((40, 80), "정책은 상태를 행동으로 사상하는 함수를 뜻한다",
+    pg.insert_text((40, 320), "정책은 상태를 행동으로 사상하는 함수를 뜻한다",
                    fontsize=9, fontname="korea")
     out = tmp_path / "t.pdf"
     d.save(out); d.close()
@@ -1035,10 +1036,10 @@ def test_untranslated_pages_reach_a_repair_loop(tmp_path, monkeypatch):
         # 한국어 줄은 영어 원본보다 **좁아야** 한다 — 넓으면 '영역이탈' 로
         # 잡혀서, 코드가 아니라 조판 문턱을 시험하게 된다.
         for k in range(4):
-            pg.insert_text((40, 40 + k * 12), KO if korean else EN,
+            pg.insert_text((40, 300 + k * 12), KO if korean else EN,
                            fontsize=9, fontname="korea" if korean else "helv")
         if leftover:
-            pg.insert_text((40, 110),
+            pg.insert_text((40, 370),
                            "with general function approximation there is not "
                            "such a clear notion here", fontsize=9)
         d.save(path)
@@ -1066,10 +1067,10 @@ def test_untranslated_repair_never_reverts_to_english(tmp_path, monkeypatch):
     import pymupdf
     from pdfko import recover
     d = pymupdf.open(); pg = d.new_page()
-    pg.insert_text((40, 60), "정책은 상태를 행동으로 사상하는 함수이다",
+    pg.insert_text((40, 300), "정책은 상태를 행동으로 사상하는 함수이다",
                    fontsize=9, fontname="korea")
-    pg.insert_text((40, 80), "with general function approximation there is "
-                             "not such a clear notion here", fontsize=9)
+    pg.insert_text((40, 320), "with general function approximation there is "
+                              "not such a clear notion here", fontsize=9)
     trans = tmp_path / "t.pdf"; d.save(trans); d.close()
     before = trans.read_bytes()
     orig = tmp_path / "o.pdf"
@@ -1081,3 +1082,26 @@ def test_untranslated_repair_never_reverts_to_english(tmp_path, monkeypatch):
     assert [r.action for r in recs] == ["kept"], recs
     assert recs[0].note, "왜 못 고쳤는지 남겨야 한다"
     assert trans.read_bytes() == before, "원문으로 되돌려 버렸다"
+
+
+def test_running_headers_are_not_treated_as_missed_translation():
+    """머리글은 엔진이 번역하지 않는다 — 수리 대상에 넣으면 끝나지 않는다.
+
+    실측으로 30쪽 중 14쪽이 `Chapter 8: Planning and Learning with Tabular
+    Methods` 하나 때문에 걸렸다. 본문에 실제로 영어가 남은 쪽은 1쪽이었다.
+    """
+    import pymupdf
+    from pdfko import recover
+    d = pymupdf.open()
+    pg = d.new_page()
+    pg.insert_text((40, 30), "Chapter 8: Planning and Learning with "
+                             "Tabular Methods", fontsize=9)   # 머리글 띠
+    for k in range(4):
+        pg.insert_text((40, 300 + k * 12),
+                       "정책은 상태를 행동으로 사상하는 함수이다",
+                       fontsize=9, fontname="korea")
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        out = Path(t) / "h.pdf"
+        d.save(out); d.close()
+        assert recover.leftover_pages(out) == []
