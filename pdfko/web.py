@@ -170,6 +170,10 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         # 프록시에는 반영되지 않는다. 그러면 용어집이 캐시 키에 안 들어가고,
         # 다시 돌렸을 때 옛 번역이 그대로 나온다. 용어 선별은 추론 서버만
         # 있으면 되므로 여기서 해도 된다.
+        kept_glossary = job.work / "용어집.csv"
+        if not glossary and kept_glossary.exists():
+            glossary = kept_glossary
+            job.log.append(f"{kept_glossary.name} 를 그대로 씁니다")
         if not glossary:
             job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
             cand = terms.extract(src, first, last)
@@ -188,11 +192,6 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         # 돌리다 브라우저로 이어받을 때 캐시가 통째로 빗나간다.
         srv.user_sig = runner.Server.signature(glossary, None)
         srv.start_proxy(__import__("sys").executable)
-        # 엔진 캐시는 우리 미들웨어를 통째로 우회한다. 지우지 않으면 검증도
-        # 합자 복구도 폭 검사도 거치지 않은 옛 결과가 그대로 나온다.
-        # 실측: 작업 폴더를 지우고 같은 파일을 다시 올렸더니 미들웨어 호출
-        # 0회로 22초 만에 "완료"됐다. CLI 는 지우는데 여기만 빠져 있었다.
-        runner.clear_engine_cache()
 
         chunks = runner.plan_chunks(first, last, 40, job.work)
         if not chunks:

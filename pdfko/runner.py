@@ -12,9 +12,10 @@ BabelDOC 은 문서를 끝까지 처리해야 PDF 를 내놓는다. 500쪽을 �
   2. 프록시 SQLite 캐시      — 성공한 문단만 저장 (실패는 저장하지 않는다)
   3. BabelDOC 자체 캐시      — 우리가 통제할 수 없다
 
-**3번을 지우지 않으면 2번을 고쳐도 소용이 없다.** BabelDOC 이 자기 캐시에서
-바로 꺼내 쓰면서 프록시를 통째로 우회하기 때문이다. 검증 규칙을 바꿨다면
-반드시 `clear_engine_cache()` 를 부를 것.
+**3번을 우회하지 않으면 2번을 고쳐도 소용이 없다.** BabelDOC 이 자기 캐시에서
+바로 꺼내 쓰면서 프록시를 통째로 지나치기 때문이다. 그래서 엔진을 부를 때마다
+`--ignore-cache` 를 준다. 예전에는 그 파일을 지웠는데, 계정에 하나뿐이라
+동시에 도는 다른 실행의 DB 까지 날렸다.
 """
 
 from __future__ import annotations
@@ -26,9 +27,6 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
-ENGINE_CACHE = Path.home() / ".cache" / "babeldoc"
-
 
 @dataclass
 class Chunk:
@@ -64,16 +62,6 @@ def plan_chunks(first: int, last: int, size: int, root: Path) -> list[Chunk]:
         out.append(Chunk(s, e, root / "parts" / f"{s}-{e}"))
         s = e + 1
     return out
-
-
-def clear_engine_cache() -> None:
-    """BabelDOC 자체 캐시를 지운다.
-
-    검증 규칙이나 프롬프트를 바꾼 뒤에는 반드시 호출해야 한다. 안 그러면
-    엔진이 옛 결과를 그대로 꺼내 쓰면서 우리 미들웨어를 건너뛴다.
-    """
-    for p in ENGINE_CACHE.glob("cache.v1.db*"):
-        p.unlink(missing_ok=True)
 
 
 # 모델 저장소는 **사용자 공용**이다. 작업 폴더 안에 두면 책마다 저장소가
@@ -420,6 +408,13 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         "--openai", "--openai-model", model,
         "--openai-base-url", f"http://127.0.0.1:{proxy_port}/v1",
         "--openai-api-key", "sk-local",
+        # 엔진 캐시를 **쓰지 않는다**. 예전에는 실행마다 남의 것까지 통째로
+        # 지웠다 — 이 캐시는 `~/.cache/babeldoc` 하나뿐이라, 두 번역을 같이
+        # 돌리면 나중 것이 먼저 것의 살아 있는 DB 를 지운다. 실측으로 다른
+        # 실행이 `(deleted)` 핸들을 쥔 채 도는 것을 관찰했고, WAL 짝이 어긋나
+        # `database disk image is malformed` 로 가는 길이다. 우리 미들웨어를
+        # 우회하는 것만 막으면 되므로 이 실행만 안 쓰면 충분하다.
+        "--ignore-cache",
         "--no-auto-extract-glossary",
         "--primary-font-family", "serif",
         "--watermark-output-mode", "no_watermark",

@@ -362,7 +362,6 @@ def _main(argv: list[str] | None = None) -> int:
             probe = runner.Server(work, a.model)
             if probe.drop_own_proxy():
                 info("도는 프록시를 먼저 내렸습니다 (캐시 파일을 쥐고 있었습니다)")
-            runner.clear_engine_cache()
             for c in chunks:
                 (c.outdir / ".done").unlink(missing_ok=True)
             # 문단 캐시도 지워야 한다. 예전에는 엔진 캐시와 구간 표식만
@@ -371,10 +370,8 @@ def _main(argv: list[str] | None = None) -> int:
             # WAL/SHM 까지 지워야 한다 — 남겨 두면 지운 행이 되살아난다.
             for suffix in ("", "-wal", "-shm"):
                 (work / "cache" / f"trans.db{suffix}").unlink(missing_ok=True)
+            (work / "용어집.csv").unlink(missing_ok=True)   # 용어집도 새로
             info("엔진 캐시·문단 캐시·구간 표식을 지웠습니다")
-        else:
-            # 엔진 캐시는 우리 미들웨어를 우회하므로 항상 비운다.
-            runner.clear_engine_cache()
 
         # 깨진 합자 사전을 원본에서 직접 만든다.
         # 엔진은 `di↵erent` 의 `↵` 를 수식으로 오인해 `di{v1}erent` 로 마스킹하고,
@@ -424,6 +421,16 @@ def _main(argv: list[str] | None = None) -> int:
         # 기동 시점에 자식에게 넘어가므로, 그 뒤에 용어집을 만들면 캐시 키에
         # 반영되지 않는다. 그러면 역어가 달라져도 옛 번역이 그대로 나온다.
         glossary = a.glossary
+        # 작업 폴더에 이미 용어집이 있으면 **그대로 쓴다.** README 가 "마음에
+        # 안 드는 역어가 있으면 그 파일을 고쳐서 다시 넘기면 됩니다" 라고
+        # 안내하는데, 정작 다음 실행이 그 파일을 말없이 덮어썼다. 사용자가
+        # 손본 것을 도구가 지우면 안 된다.
+        kept_glossary = work / "용어집.csv"
+        if not glossary and kept_glossary.exists():
+            glossary = kept_glossary
+            auto_terms = []
+            info(f"{kept_glossary.name} 를 그대로 씁니다 "
+                 f"(새로 만들려면 이 파일을 지우거나 --fresh)")
         if auto_terms:
             step("용어 통일")
             from . import terms as _terms

@@ -60,7 +60,6 @@ def stubbed(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(runner, "translate_chunk", fake_chunk)
-    monkeypatch.setattr(runner, "clear_engine_cache", lambda: None)
     monkeypatch.setattr(runner.Server, "start_ollama", lambda self: None)
     monkeypatch.setattr(runner.Server, "start_proxy", lambda self, py: None)
     monkeypatch.setattr(runner.Server, "model_ready", lambda self: True)
@@ -103,11 +102,17 @@ def test_both_paths_do_the_same_steps():
     import inspect
     from pdfko import cli, web
 
+    # `--ignore-cache` 는 runner 가 붙이므로 양쪽 소스에는 안 보인다.
+    # 대신 두 경로가 같은 runner 함수를 쓰는지로 확인한다.
+    import inspect as _i
+    from pdfko import runner as _r
+    assert "--ignore-cache" in _i.getsource(_r.translate_chunk)
+
     cli_src = inspect.getsource(cli._main)
     web_src = inspect.getsource(web._run)
     for step in ("preflight", "clipscan.scan", "clipscan.clean",
                  "glyphmap.build_table",
-                 "clear_engine_cache", "model_ready", "keep_terms", "decide",
+                 "model_ready", "keep_terms", "decide",
                  "plan_chunks", "translate_chunk", "merge", "qa.scan",
                  "coverage", "mixed_language_figures", "repair_pages",
                  "write_report", "cleanup_work"):

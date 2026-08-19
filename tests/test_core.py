@@ -839,3 +839,33 @@ def test_malformed_style_tag_without_id_is_caught():
     bad = "이중 스케일에 대해서는 (Konda<style '5'>, 치치클리스) 를 참고한다"
     ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": bad}])
     assert not ok and "style" in why
+
+
+def test_existing_glossary_is_not_overwritten(tmp_path, monkeypatch):
+    """사용자가 손본 용어집을 다음 실행이 지우면 안 된다.
+
+    README 는 "마음에 안 드는 역어가 있으면 그 파일을 고쳐서 다시 넘기면
+    됩니다" 라고 안내하는데, 정작 그냥 다시 돌리면 말없이 덮어썼다.
+    실측으로 손으로 고친 역어가 사라졌다.
+    """
+    import inspect
+    from pdfko import cli
+    src = inspect.getsource(cli._main)
+    # 이미 있으면 그대로 쓰고, --fresh 일 때만 새로 만든다
+    assert "kept_glossary" in src
+    assert 'unlink(missing_ok=True)   # 용어집도 새로' in src
+
+
+def test_engine_cache_is_bypassed_not_deleted():
+    """엔진 캐시를 지우면 동시에 도는 다른 실행의 DB 까지 날린다.
+
+    `~/.cache/babeldoc` 는 계정에 하나뿐이다. 실측으로 다른 실행이
+    `(deleted)` 핸들을 쥔 채 도는 것이 관찰됐고, WAL 짝이 어긋나면 SQLite 가
+    깨진다. pdfko 밖에서 babeldoc 을 쓰는 사람의 캐시까지 날아간다.
+    이번 실행만 안 쓰면 목적은 똑같이 이룬다.
+    """
+    import inspect
+    from pdfko import recover, runner
+    assert "--ignore-cache" in inspect.getsource(runner.translate_chunk)
+    assert "--ignore-cache" in inspect.getsource(recover.retranslate_page)
+    assert not hasattr(runner, "ENGINE_CACHE")     # 지울 대상 자체가 없다
