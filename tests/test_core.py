@@ -896,5 +896,6 @@ def test_ensure_model_does_not_pretend_to_pick_the_store():
     """
     import inspect
     from pdfko import runner
+    # 주석에 낱말이 나오는 것은 괜찮다 — **대입**이 없어야 한다
     src = inspect.getsource(runner.ensure_model)
-    assert "OLLAMA_MODELS" not in src
+    assert 'env["OLLAMA_MODELS"]' not in src
