@@ -212,6 +212,12 @@ sudo apt install fonts-noto-cjk
 
 **"스캔본입니다"라고 나올 때** — 그 PDF에는 텍스트가 없고 글자 그림만 있습니다. 이 도구로는 번역할 수 없습니다.
 
+**ROS 를 쓰는 컴퓨터에서 이상한 오류가 날 때** — ROS 가 `PYTHONPATH` 에 파이썬 3.10 경로를 끼워 넣어 다른 파이썬을 망가뜨립니다(`No module named 'yaml'` 같은 오류). 그 변수를 지우고 실행하세요.
+
+```bash
+env -u PYTHONPATH -u AMENT_PREFIX_PATH pdfko book.pdf
+```
+
 **번역이 영어 그대로일 때** — 모델이 등록되지 않았을 수 있습니다. 이 도구는 자기 서버를 11500 포트에 띄우므로 확인할 때도 포트를 지정해야 합니다.
 
 ```bash
