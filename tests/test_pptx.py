@@ -16,7 +16,7 @@ import pytest
 
 pptx = pytest.importorskip("pptx")
 from pptx import Presentation                       # noqa: E402
-from pptx.util import Emu, Inches, Pt               # noqa: E402
+from pptx.util import Inches                        # noqa: E402
 
 
 def _deck():
