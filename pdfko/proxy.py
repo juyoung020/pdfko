@@ -329,7 +329,7 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
-         "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0,
+         "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0, "fragment_retried": 0,
          "ligature_dissolved": 0, "json_repaired": 0}
 _sampled = 0
 
@@ -344,6 +344,56 @@ def log_jsonl(name: str, obj: dict) -> None:
 
 
 # ---------------------------------------------------------------- 검증
+_ENG_RUN = re.compile(r"(?:[A-Za-z][A-Za-z'’\-]*\s+){5,}[A-Za-z][A-Za-z'’\-]*")
+_YEAR_RE = re.compile(r"\b(?:1[89]|20)\d\d[a-z]?\b")
+_MASK_RE = re.compile(r"</?style[^>]*>|\{v\d+\}")
+
+
+def leftover_english(tgt: str) -> str | None:
+    """번역된 문단에 통째로 남은 **영어 산문**을 돌려준다. 없으면 None.
+
+    ## 왜 한글 비율로는 안 되는가
+
+    `check` 의 한글 바닥(0.15)은 문단 **전체** 비율이라, 여덟 문장 중 일곱이
+    한국어면 남은 한 문장이 영어여도 통과한다. 실측: 이 책 3660문단 중
+    165개(4.5%)가 그렇게 통과했고, 쪽 단위 검사는 "미번역 0쪽"이라고 찍었다.
+    수식 자리표시자가 든 문단에서 특히 잦다 — 자리표시자 없는 문단은 실패율
+    1%인데 있는 문단은 8~10%다. 모델이 `{v1}` 이 섞인 문장을 만나면 통째로
+    영어를 되뱉는다.
+
+    ## 왜 이걸로 되는가
+
+    표본 24건을 다시 보냈더니 **24건 전부 한국어가 됐다.** 모델이 못 하는 게
+    아니라 한 번에 놓치는 것이므로, 짚어서 다시 물으면 된다.
+
+    ## 무엇을 봐주는가
+
+    영어로 남기는 게 **맞는** 것들이 있다. 어휘 목록을 두지 않고 형태로만 가른다.
+
+      · 문단이 아직 한국어가 아니면      → 다른 검사(한글 바닥)의 몫이다
+      · 낱말이 전부 대문자              → 약어 풀이 (MATCHBOX EDUCABLE …)
+      · 거의 모든 낱말이 첫 글자 대문자   → 인명·논문 제목
+      · 근처에 연도가 있으면             → 인용 (Sutton and Barto, 1998)
+      · 세 글자 이상 낱말이 넷 미만       → 행렬·축 라벨 (`A A A x v v x b`)
+    """
+    body = _MASK_RE.sub(" ", tgt)
+    if hangul_ratio(body) < 0.15:
+        return None
+    for m in _ENG_RUN.finditer(body):
+        run = m.group(0)
+        words = run.split()
+        if len([w for w in words if len(w) >= 3]) < 4:
+            continue
+        if run.isupper():
+            continue
+        if sum(w[:1].isupper() for w in words) >= len(words) - 1:
+            continue
+        if _YEAR_RE.search(body[max(0, m.start() - 60):m.end() + 60]):
+            continue
+        return run
+    return None
+
+
 def check(items: list[dict], out: list | None) -> tuple[bool, str]:
     """응답 배열이 입력 배열과 정합한지 항목별로 본다."""
     if out is None:
@@ -403,6 +453,12 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         if letters >= 12 and hangul_ratio(tgt) < 0.15:
             return False, f"id {iid} hangul {hangul_ratio(tgt):.2f}"
 
+        # 반쪽 번역. 한글 비율만 보면 통과한다 — 80%가 한국어인 문단에 영어
+        # 한 문장이 남아도 0.15 바닥을 넘기 때문이다. 실측으로 이 책 3660문단
+        # 중 165개(4.5%)가 그 상태였고, 쪽 단위 검사는 "미번역 0쪽"이라고 했다.
+        if leftover_english(tgt):
+            return False, f"id {iid} 영어 잔류"
+
         # 길이 폭주. 짧은 라벨과 수식은 면제한다.
         sw = est_width(src)
         if letters >= 12 and sw >= 10:
@@ -456,6 +512,21 @@ def repair_hint(items: list[dict], out: list | None) -> str:
               "Translate ONLY the words present. Do not complete the sentence, "
               "do not add information, do not restate a clause. Keep it at most "
               f"{WIDTH_MAX:.1f}x the source length.")
+
+    # 반쪽 번역. 남은 문장을 그대로 인용해 준다 — "영어가 남았다" 라고만 하면
+    # 모델이 어디를 말하는지 못 찾고 같은 출력을 되돌려준다.
+    half = []
+    for it in items:
+        iid = str(it.get("id"))
+        run = leftover_english((by_id.get(iid) or {}).get("output") or "")
+        if run:
+            half.append(f'id {iid}: still English — "{run[:80]}"')
+    if half:
+        return ("You translated part of these items and left the rest in "
+                "English.\n" + "\n".join(half)
+                + "\nRe-translate the WHOLE item into Korean. Keep proper "
+                  "nouns, citations and code identifiers as they are, but no "
+                  "English sentence may remain.")
 
     if not lines:
         return ("Some items were wrong. Re-translate and keep every {vN} "
@@ -683,19 +754,50 @@ async def chat(request: Request):
                    for o in (parse_output(raw) or []) if isinstance(o, dict)}
         except Exception:
             return None, 0
-        new_runs, hit = list(runs), 0
+        def usable(v, src_run) -> bool:
+            if not (isinstance(v, str) and v.strip()):
+                return False
+            if KEEP_RE.search(v) or _STYLE_NEAR.search(v):
+                return False
+            # 라틴 문자가 8자 넘는 조각인데 한글이 거의 없으면 번역이 아니다.
+            if sum(1 for c in src_run if c.isalpha() and c.isascii()) >= 8 \
+                    and hangul_ratio(v) < 0.15:
+                return False
+            return leftover_english(v) is None
+
+        new_runs, hit, bad = list(runs), 0, []
         for k in idx:
             v = got.get(str(k))
-            if not (isinstance(v, str) and v.strip()):
-                continue
-            if KEEP_RE.search(v) or _STYLE_NEAR.search(v):
-                continue
-            # 라틴 문자가 8자 넘는 조각인데 한글이 거의 없으면 번역이 아니다.
-            if sum(1 for c in runs[k] if c.isalpha() and c.isascii()) >= 8 \
-                    and hangul_ratio(v) < 0.15:
-                continue
-            new_runs[k] = v
-            hit += 1
+            if usable(v, runs[k]):
+                new_runs[k] = v
+                hit += 1
+            else:
+                bad.append(k)
+
+        # 못 갈아낀 조각은 **원문 영어가 그대로 남는다**. 조용히 두면 한국어
+        # 문장 한복판에 영어 한 문장이 박힌 채로 출고된다 — 실측으로 이 책
+        # 55쪽·58쪽이 그랬고, 통짜 경로에 잔류 검사를 넣은 뒤에도 조각 경로로
+        # 새어 나왔다. 조각은 문장 중간에서 잘려 있는 일이 많아서(`decreases
+        # as the number of…`) 모델이 한 번에 놓치기 쉽다. 짚어서 다시 묻는다.
+        if bad:
+            sub2 = [{"id": k, "input": runs[k], "layout_label": "fragment"}
+                    for k in bad]
+            hint2 = ("These are FRAGMENTS cut out of a sentence — they may "
+                     "start or end mid-clause. Translate each into Korean as "
+                     "the fragment it is. Do not complete the sentence, do not "
+                     "add words, and do not leave any of them in English.")
+            try:
+                raw2 = await call(msgs_for(sub2, hint2), 0.0, max_tok)
+                got2 = {str(o.get("id")): o.get("output")
+                        for o in (parse_output(raw2) or []) if isinstance(o, dict)}
+            except Exception:
+                got2 = {}
+            for k in bad:
+                v = got2.get(str(k))
+                if usable(v, runs[k]):
+                    new_runs[k] = v
+                    hit += 1
+                    STATS["fragment_retried"] += 1
         if not hit:
             return None, 0        # 한 조각도 못 갈았다 — 캐시에 넣어선 안 된다
         rebuilt = "".join(new_runs[k] + (phs[k] if k < len(phs) else "")

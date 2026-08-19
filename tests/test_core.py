@@ -928,3 +928,57 @@ def test_fragment_mode_is_reported_not_just_counted(tmp_path):
     recover.write_report(rep2, [qa.PageVerdict(page=1, words=100)], [], 0,
                          log_dir=tmp_path / "nologs")
     assert "어순이 고정된 문단" not in rep2.read_text(encoding="utf-8")
+
+
+# ── 반쪽 번역 ───────────────────────────────────────────────────────────
+def test_half_translated_paragraph_is_rejected():
+    """80%가 한국어여도 영어 문장이 통째로 남았으면 걸러야 한다.
+
+    실측: 이 책 3660문단 중 165개(4.5%)가 한글 바닥(0.15)을 넘겨 통과했고,
+    쪽 단위 검사는 그 상태를 "미번역 0쪽"으로 보고했다.
+    """
+    from pdfko import proxy
+    tgt = ("가치 함수는 각 상태의 기대 이득을 나타낸다. "
+           "With general function approximation there is not such a clear "
+           "notion of number of experiences with a single state. "
+           "따라서 근사가 필요하다.")
+    assert proxy.leftover_english(tgt)
+    ok, why = proxy.check([{"id": 1, "input": "x " * 40}],
+                          [{"id": 1, "output": tgt}])
+    assert not ok and "영어" in why, why
+
+
+def test_untranslated_paragraph_is_left_to_the_hangul_floor():
+    """아직 한국어가 아닌 문단은 이 검사가 손대지 않는다 — 이중 판정 방지."""
+    from pdfko import proxy
+    assert proxy.leftover_english(
+        "The agent learns a policy from reward over time.") is None
+
+
+def test_preserved_english_does_not_trigger_a_retry():
+    """영어로 두는 게 맞는 것들을 어휘 목록 없이 형태로만 가른다."""
+    from pdfko import proxy
+    for keep in [
+        # 인용 — 근처에 연도
+        "이 착상은 Sutton and Barto, Reinforcement Learning An Introduction, "
+        "1998 에서 왔다.",
+        # 약어 풀이 — 전부 대문자
+        "메이스는 MATCHBOX EDUCABLE NAUGHTS AND CROSSES ENGINE 의 준말이다.",
+        # 인명·제목 — 낱말마다 첫 글자 대문자
+        "저자는 Richard S Sutton Andrew G Barto Francis Bach 이다.",
+        # 행렬·축 라벨 — 짧은 낱말뿐
+        "행렬은 다음과 같다. A A A x v v x b b x w A b 순서로 읽는다.",
+    ]:
+        assert proxy.leftover_english(keep) is None, keep
+
+
+def test_the_leftover_sentence_is_quoted_back_to_the_model():
+    """"영어가 남았다" 라고만 하면 모델이 어디인지 못 찾는다."""
+    from pdfko import proxy
+    tgt = ("정책은 상태를 행동으로 사상한다. The value of a state is the "
+           "expected return starting from that state. 이를 가치라 한다.")
+    src = ("A policy maps states to actions. The value of a state is the "
+           "expected return starting from that state. We call this the value.")
+    hint = proxy.repair_hint([{"id": 7, "input": src}],
+                             [{"id": 7, "output": tgt}])
+    assert "The value of a state" in hint, hint
