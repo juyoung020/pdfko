@@ -966,3 +966,19 @@ def test_pseudocode_keywords_stay_english():
     for translate in ("The agent selects an action", "Initialize {v1} arbitrarily",
                       "Loop for each step of episode"):
         assert not only_code(translate), translate
+
+
+def test_code_words_are_notation_not_subject_vocabulary():
+    """의사코드 목록이 분야 어휘로 번져서는 안 된다.
+
+    `until`·`end for` 는 어느 분야 교재든 알고리즘 상자에 똑같이 나오는
+    **영어 프로그래밍 표기법**이다. 여기에 `policy`·`gradient` 같은 것이
+    끼면 그 순간 분야 전용 도구가 된다. STOP 목록과 같은 원칙이다.
+    """
+    from pdfko import proxy
+    subject = {"policy", "reward", "agent", "state", "value", "gradient",
+               "network", "cell", "membrane", "energy", "market", "gene",
+               "matrix", "vector", "sample", "model", "learning"}
+    assert not (proxy._CODE_WORDS & subject), proxy._CODE_WORDS & subject
+    # 전부 영어 프로그래밍 제어 낱말이어야 한다
+    assert all(w.isalpha() and w.islower() for w in proxy._CODE_WORDS)
