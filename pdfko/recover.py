@@ -298,8 +298,43 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
     return recs
 
 
+def _fragment_note(log_dir: Path) -> list[str]:
+    """조각 모드로 번역된 문단을 보고서에 실을 줄로 만든다.
+
+    조각 모드는 자리표시자 사이의 본문만 번역하고 자리표시자는 도구가
+    원위치에 끼운다. 구조적으로 실패할 수 없는 대신 **어순이 조각 단위로
+    굳는다** — 한국어는 어순이 바뀌는데 수식은 제자리에 남으므로, 수식이
+    그것을 설명하는 구절에서 떨어져 나간다. 레이아웃 검사로는 안 잡힌다.
+    좌표는 멀쩡하기 때문이다.
+    """
+    import json as _json
+    f = log_dir / "fragments.jsonl"
+    if not f.exists():
+        return []
+    rows = []
+    for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            rows.append(_json.loads(line))
+        except Exception:
+            continue
+    if not rows:
+        return []
+    out = ["## 어순이 고정된 문단", "",
+           f"자리표시자가 많아 **조각 단위로 번역한 문단이 {len(rows)}개** 있습니다. "
+           "수식은 제자리에 남고 그 사이 본문만 한국어가 되므로, 수식이 그것을 "
+           "설명하는 구절에서 떨어져 보일 수 있습니다. 레이아웃 검사로는 "
+           "잡히지 않습니다 — 글자 위치는 멀쩡하기 때문입니다.", ""]
+    for r in rows[:5]:
+        out.append(f"- `{r.get('src', '')[:90]}…`")
+    if len(rows) > 5:
+        out.append(f"- … 외 {len(rows) - 5}개")
+    out.append("")
+    return out
+
+
 def write_report(path: Path, verdicts: list[PageVerdict],
-                 recoveries: list[Recovery], offset: int) -> None:
+                 recoveries: list[Recovery], offset: int,
+                 log_dir: Path | None = None) -> None:
     """무엇이 어떻게 처리됐는지 사람이 읽을 수 있게 남긴다.
 
     조용히 넘어가지 않는 것이 이 파일의 존재 이유다.
@@ -336,6 +371,9 @@ def write_report(path: Path, verdicts: list[PageVerdict],
                   "복구 과정에서 오류가 나 되돌린 것입니다.", ""]
         lines += [f"- {r.page}쪽 — {r.note}" for r in failed]
         lines.append("")
+
+    if log_dir:
+        lines += _fragment_note(log_dir)
 
     lines += [
         "## 이 표를 읽는 법", "",

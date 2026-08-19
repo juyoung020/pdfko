@@ -458,9 +458,13 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         "--watermark-output-mode", "no_watermark",
         "--only-include-translated-page",
         # 동시 요청 수는 슬롯 수(OLLAMA_NUM_PARALLEL=8)에 맞춘다. 더 보낸다고
-        # 빨라지지 않는다 — 실측 처리량이 4개 91, **8개 122**, 16개 112,
+        # 빨라지지 않는다 — 추론만 재면 4개 91, **8개 122**, 16개 112,
         # 24개 89 tok/s 다. 슬롯보다 많이 보내면 KV 캐시 경쟁만 늘어난다.
-        # 16개로 보내고 있었으니 9%쯤 손해였다.
+        #
+        # 다만 종단간 효과는 그만큼 크지 않다. 4쪽 구간을 번갈아 재니
+        # 8개 203.9·210.0초, 16개 210.6·213.3초 — 2.4% 다. 엔진 기동과
+        # 조판 해석 같은 고정 비용이 추론 차이를 희석한다. 그래도 두 쌍 모두
+        # 8개가 빨랐고 공짜라서 맞춘다.
         "--qps", str(qps), "--pool-max-workers", str(workers),
         "--working-dir", str(work / "work"),
         "--output", str(chunk.outdir),

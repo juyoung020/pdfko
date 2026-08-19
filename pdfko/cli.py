@@ -554,7 +554,8 @@ def _main(argv: list[str] | None = None) -> int:
                     for v in severe]
 
     rep = work / "품질보고서.md"
-    recover.write_report(rep, verdicts, recs, offset)
+    recover.write_report(rep, verdicts, recs, offset,
+                         log_dir=work / "logs")
 
     runner.stop_all()
     # 엔진이 남긴 중간 산출물은 쪽수에 비례해 쌓인다(3쪽에 13MB).

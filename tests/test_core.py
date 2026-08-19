@@ -899,3 +899,32 @@ def test_ensure_model_does_not_pretend_to_pick_the_store():
     # 주석에 낱말이 나오는 것은 괜찮다 — **대입**이 없어야 한다
     src = inspect.getsource(runner.ensure_model)
     assert 'env["OLLAMA_MODELS"]' not in src
+
+
+def test_fragment_mode_is_reported_not_just_counted(tmp_path):
+    """조각 모드로 번역한 문단을 사용자에게 알려야 한다.
+
+    조각 모드는 어순을 조각 단위로 굳혀서, 수식이 그것을 설명하는 구절에서
+    떨어져 나간다. 품질 검증이 "수식 어긋남의 85%가 여기서 나온다" 고
+    지목한 곳인데, 세기만 하고 보고서는 침묵하면서 "파손 0쪽" 이라고
+    말하고 있었다. 레이아웃 검사로는 안 잡힌다 — 좌표는 멀쩡하기 때문이다.
+    """
+    import json
+    from pdfko import qa, recover
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "fragments.jsonl").write_text(
+        "\n".join(json.dumps({"why": "heavy", "src": f"{{v1}}term {i}"})
+                  for i in range(3)) + "\n", encoding="utf-8")
+    rep = tmp_path / "r.md"
+    recover.write_report(rep, [qa.PageVerdict(page=1, words=100)], [], 0,
+                         log_dir=logs)
+    txt = rep.read_text(encoding="utf-8")
+    assert "어순이 고정된 문단" in txt
+    assert "3개" in txt
+
+    # 조각 모드를 안 썼으면 그 절은 나오지 않는다
+    rep2 = tmp_path / "r2.md"
+    recover.write_report(rep2, [qa.PageVerdict(page=1, words=100)], [], 0,
+                         log_dir=tmp_path / "nologs")
+    assert "어순이 고정된 문단" not in rep2.read_text(encoding="utf-8")

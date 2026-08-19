@@ -724,6 +724,8 @@ async def chat(request: Request):
         if hit:
             cache_put(item_key(it.get("input", "")), it.get("input", ""), rebuilt, 1)
             STATS["fragment_mode"] += 1
+            log_jsonl("fragments.jsonl", {"ts": time.time(), "why": "heavy",
+                                          "src": it.get("input", "")[:300]})
 
     # (b) 나머지는 통짜로 보내되, **실패한 항목만** 다시 보낸다.
     #     배치 10개 중 1개가 틀렸다고 10개를 재번역하면 GPU가 재작업만 한다.
@@ -788,6 +790,12 @@ async def chat(request: Request):
             results[str(it.get("id"))] = rebuilt
             rescued_frag.append(it)
             STATS["fragment_mode"] += 1
+            # 어느 문단이 이렇게 됐는지 남긴다. 조각 모드는 어순을 조각
+            # 단위로 굳혀서, 수식이 그 수식을 설명하는 구절에서 떨어져 나간다.
+            # 세기만 하고 알리지 않으면 보고서가 "파손 0쪽"이라고 말하는
+            # 동안 사용자는 읽기 어려운 문단을 만나게 된다.
+            log_jsonl("fragments.jsonl", {"ts": time.time(), "why": "rescue",
+                                          "src": it.get("input", "")[:300]})
         pending = [it for it in pending if it not in rescued_frag]
 
     # 조각 모드로도 안 되면 그때만 원문으로 둔다.

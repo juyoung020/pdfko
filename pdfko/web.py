@@ -255,7 +255,8 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
                         for v in severe]
 
         rep = job.work / "품질보고서.md"
-        recover.write_report(rep, verdicts, recs, offset)
+        recover.write_report(rep, verdicts, recs, offset,
+                             log_dir=job.work / "logs")
         job.out, job.report = out, rep
         # 엔진 중간 산출물은 쪽수에 비례해 쌓인다. 결과와 보고서는 남기고
         # work/ 만 지운다. 사용자가 만든 번역본을 지우지는 않는다.
