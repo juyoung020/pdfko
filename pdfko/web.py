@@ -277,6 +277,25 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         runner.stop_all()
 
 
+@app.middleware("http")
+async def _cap_upload(request, call_next):
+    """본문을 받기 **전에** 크기를 거절한다.
+
+    핸들러 안에서 재는 것으로는 늦다. FastAPI 는 `UploadFile` 을 넘겨주려고
+    핸들러 본문이 돌기 전에 `request.form()` 을 끝까지 읽고, starlette 은
+    1MB 를 넘으면 그 내용을 `/tmp` 에 통째로 쏟는다. 그래서 40GB 요청 하나가
+    우리 코드가 한 줄도 돌기 전에 `/tmp` 를 채운다. 홈이 아니라 `/tmp` 로
+    문제를 옮겼을 뿐이었다.
+    """
+    if request.url.path == "/start":
+        n = request.headers.get("content-length")
+        if n and n.isdigit() and int(n) > MAX_UPLOAD:
+            return JSONResponse(
+                {"error": f"파일이 너무 큽니다 (최대 {MAX_UPLOAD // (1 << 20)}MB)"},
+                status_code=413)
+    return await call_next(request)
+
+
 # ---------------------------------------------------------------- 엔드포인트
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:

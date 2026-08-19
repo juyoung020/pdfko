@@ -131,8 +131,12 @@ def untouchable_text(prs: Presentation) -> list[str]:
 
 
 def extract(path: str | Path) -> tuple[Presentation, list[TextUnit]]:
-    """번역할 문단을 모두 뽑아낸다."""
-    prs = Presentation(str(path))
+    """파일에서 번역할 문단을 모두 뽑아낸다."""
+    return extract_from(Presentation(str(path)))
+
+
+def extract_from(prs: Presentation) -> tuple[Presentation, list[TextUnit]]:
+    """이미 열어 둔 덱에서 뽑는다. 파일이 없어도 되므로 시험하기 쉽다."""
     units: list[TextUnit] = []
     for si, slide in enumerate(prs.slides, 1):
         for path, sh, tf, kind in _iter_frames(slide):

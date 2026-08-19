@@ -430,7 +430,7 @@ PARAMETER repeat_penalty 1.05
 def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
                     model: str, proxy_port: int, glossary: Path | None,
                     prompt_file: Path | None, lang_out: str = "ko-KR",
-                    qps: int = 30, workers: int = 16,
+                    qps: int = 30, workers: int = 8,
                     extra: list[str] | None = None) -> bool:
     """구간 하나를 번역한다. 성공하면 True.
 
@@ -457,6 +457,10 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         "--primary-font-family", "serif",
         "--watermark-output-mode", "no_watermark",
         "--only-include-translated-page",
+        # 동시 요청 수는 슬롯 수(OLLAMA_NUM_PARALLEL=8)에 맞춘다. 더 보낸다고
+        # 빨라지지 않는다 — 실측 처리량이 4개 91, **8개 122**, 16개 112,
+        # 24개 89 tok/s 다. 슬롯보다 많이 보내면 KV 캐시 경쟁만 늘어난다.
+        # 16개로 보내고 있었으니 9%쯤 손해였다.
         "--qps", str(qps), "--pool-max-workers", str(workers),
         "--working-dir", str(work / "work"),
         "--output", str(chunk.outdir),
