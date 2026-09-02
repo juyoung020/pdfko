@@ -740,8 +740,12 @@ async def chat(request: Request):
         cache_put(ckey, user, raw, 1)
         return JSONResponse(_shape(raw))
 
-    async def fragment_pass(it) -> tuple[str | None, int]:
+    async def fragment_pass(it, drop_glossary=False) -> tuple[str | None, int]:
         """자리표시자 사이의 본문만 번역해 되끼운다. → (결과, 갈아낀 조각 수)
+
+        `drop_glossary` 는 (c) 사후 구제에서만 켠다. 거기는 통짜가 세 번 다
+        실패한 뒤라 "마지막 한 번은 용어집 없이"가 적용되어야 하는 자리다.
+        (a) 사전 조각은 그 문단의 **첫** 시도이므로 용어집을 유지한다.
 
         실패하면 (None, 0). 아래 (a) 사전 조각과 (c) 사후 구제가 **반드시**
         같은 코드를 지나가야 한다. 예전에는 검증이 (c) 에만 있어서 (a) 로
@@ -754,7 +758,8 @@ async def chat(request: Request):
             return it.get("input", ""), 0      # 자리표시자뿐 — 번역할 게 없다
         sub = [{"id": k, "input": runs[k], "layout_label": "fragment"} for k in idx]
         try:
-            raw = await call(msgs_for(sub), 0.1, max_tok)
+            raw = await call(msgs_for(sub, drop_glossary=drop_glossary),
+                             0.1, max_tok)
             got = {str(o.get("id")): o.get("output")
                    for o in (parse_output(raw) or []) if isinstance(o, dict)}
         except Exception:
@@ -792,7 +797,9 @@ async def chat(request: Request):
                      "the fragment it is. Do not complete the sentence, do not "
                      "add words, and do not leave any of them in English.")
             try:
-                raw2 = await call(msgs_for(sub2, hint2), 0.0, max_tok)
+                raw2 = await call(msgs_for(sub2, hint2,
+                                           drop_glossary=drop_glossary),
+                                  0.0, max_tok)
                 got2 = {str(o.get("id")): o.get("output")
                         for o in (parse_output(raw2) or []) if isinstance(o, dict)}
             except Exception:
@@ -898,7 +905,10 @@ async def chat(request: Request):
     if pending:
         rescued_frag = []
         for it in pending:
-            rebuilt, hit = await fragment_pass(it)
+            # 통짜가 세 번 다 실패한 뒤다. 용어집 표가 원인일 수 있으므로
+            # 마지막 이 한 번은 표 없이 물어본다 — 위 (b) 의 마지막 시도와
+            # 같은 이유이고, 실제로 상류가 보는 **맨 마지막** 요청이 여기다.
+            rebuilt, hit = await fragment_pass(it, drop_glossary=True)
             if rebuilt is None or not hit:
                 continue
             # 여기서는 캐시에 넣지 않는다. 조각 모드는 어순이 조각 단위로
