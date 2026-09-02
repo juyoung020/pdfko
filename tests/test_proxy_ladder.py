@@ -1,0 +1,218 @@
+"""프록시의 재시도 사다리를 **끝에서 끝까지** 태운다.
+
+## 왜 이 파일이 따로 있는가
+
+`test_core.py` 는 `check()` 를 직접 불러 항목 하나를 판정한다. 그건 규칙이
+맞는지만 본다. 정작 중요한 것은 **규칙이 틀렸다고 판정한 다음에 무슨 일이
+벌어지는가** 다 — 그 항목만 다시 보내는지, 힌트가 붙는지, 마지막에 용어집을
+떼는지, 조각 모드로 떨어지는지, 끝내 실패하면 원문을 돌려주는지.
+
+그 경로는 지금까지 한 줄도 시험되지 않았다(`proxy.py` 커버리지 44%). 그런데
+이 도구가 하는 일의 거의 전부가 거기 있다. 실제로 여기서 났던 사고들:
+
+  · 조각 모드 결과가 검증을 건너뛰어 영어 반향이 성공으로 처리됨
+  · 실패한 문단이 캐시에 박혀 정상 모델로 다시 물어도 영어가 나옴
+  · 완전한 번역을 `]` 하나 때문에 버리고 조각 모드로 떨어짐
+
+## 어떻게 시험하나
+
+GPU 도 추론 서버도 쓰지 않는다. `httpx.MockTransport` 로 상류를 가로채
+**대본대로** 응답을 돌려준다. 대본을 바꿔 가며 사다리의 각 칸을 밟는다.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from pdfko import proxy
+
+PH = re.compile(r"\{v\d+\}")
+
+
+# ── 대본대로 답하는 가짜 상류 ────────────────────────────────────────────
+class Upstream:
+    """호출될 때마다 대본의 다음 줄을 돌려준다.
+
+    대본이 떨어지면 마지막 줄을 계속 돌려준다 — 재시도가 몇 번인지에
+    시험이 매달리지 않게 하려는 것이다.
+    """
+
+    def __init__(self, *script):
+        self.script = list(script)
+        self.seen: list[str] = []          # 상류가 실제로 받은 사용자 메시지
+
+    def _next(self, sent_items):
+        i = min(len(self.seen) - 1, len(self.script) - 1)
+        step = self.script[i]
+        return step(sent_items) if callable(step) else step
+
+    def transport(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            user = "\n".join(m["content"] for m in body["messages"])
+            self.seen.append(user)
+            arr, _, _ = proxy.extract_array(body["messages"][0]["content"])
+            for m in body["messages"]:
+                got, _, _ = proxy.extract_array(m["content"])
+                if got:
+                    arr = got
+            return httpx.Response(200, json={"choices": [
+                {"message": {"content": self._next(arr or [])}}]})
+        return httpx.MockTransport(handler)
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    """가짜 상류를 물린 프록시. 캐시와 로그는 임시 폴더로 보낸다."""
+    monkeypatch.setattr(proxy, "CACHE_DB", tmp_path / "c.db")
+    monkeypatch.setattr(proxy, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(proxy, "_DB", None, raising=False)
+
+    def build(*script):
+        up = Upstream(*script)
+        monkeypatch.setattr(proxy, "client",
+                            httpx.AsyncClient(transport=up.transport()))
+        return up, TestClient(proxy.app)
+    return build
+
+
+def ask(cli, *inputs):
+    """BabelDOC 이 보내는 모양 그대로 요청한다."""
+    items = [{"id": i, "input": t, "layout_label": "plain text"}
+             for i, t in enumerate(inputs)]
+    body = ("Translate into ko-KR. Reply with a JSON array.\n\n"
+            + json.dumps(items, ensure_ascii=False))
+    r = cli.post("/v1/chat/completions",
+                 json={"model": "m", "messages": [{"role": "user",
+                                                   "content": body}]})
+    assert r.status_code == 200, r.text
+    out, _, _ = proxy.extract_array(
+        r.json()["choices"][0]["message"]["content"])
+    return {str(o["id"]): o["output"] for o in out}
+
+
+def arr(*outs):
+    return json.dumps([{"id": i, "output": t} for i, t in enumerate(outs)],
+                      ensure_ascii=False)
+
+
+# ── 사다리 한 칸씩 ───────────────────────────────────────────────────────
+def test_a_clean_answer_passes_through(rig):
+    up, cli = rig(arr("정책은 상태를 행동으로 사상하는 함수이다."))
+    got = ask(cli, "A policy maps states to actions.")
+    assert got["0"] == "정책은 상태를 행동으로 사상하는 함수이다."
+    assert len(up.seen) == 1, "멀쩡한 답에 재시도가 붙었다"
+
+
+def test_truncated_json_is_repaired_not_retried(rig):
+    """완전한 번역을 닫는 괄호 하나 때문에 버리면 안 된다.
+
+    실측으로 이것이 조각 모드로 떨어지는 가장 큰 원인이었다.
+    """
+    good = '[{"id": 0, "output": "정책은 상태를 행동으로 사상하는 함수이다."}'
+    up, cli = rig(good)                      # `]` 가 없다
+    got = ask(cli, "A policy maps states to actions.")
+    assert got["0"] == "정책은 상태를 행동으로 사상하는 함수이다."
+    assert len(up.seen) == 1, "고칠 수 있는 답을 버리고 다시 물었다"
+
+
+def test_only_the_failed_item_is_resent(rig):
+    """배치 10개 중 1개가 틀렸다고 10개를 다시 보내면 GPU가 재작업만 한다."""
+    ko = "정책은 상태를 행동으로 사상하는 함수이다."
+    ko2 = "가치 함수는 기대 이득을 나타낸다."
+    up, cli = rig(
+        arr(ko, "The value function gives the expected return."),   # 2번이 영어
+        lambda items: json.dumps([{"id": items[0]["id"], "output": ko2}],
+                                 ensure_ascii=False),
+    )
+    got = ask(cli, "A policy maps states to actions.",
+              "The value function gives the expected return.")
+    assert got["0"] == ko and got["1"] == ko2
+    assert len(up.seen) == 2
+    second, _, _ = proxy.extract_array(up.seen[1])
+    assert [i["id"] for i in second] == [1], "성공한 항목까지 다시 보냈다"
+
+
+def test_a_dropped_placeholder_is_named_in_the_retry(rig):
+    """수식을 흘렸으면 **어느 토큰인지 지목해서** 고치게 해야 한다."""
+    src = "The step size {v1} controls how fast {v2} changes over time."
+    up, cli = rig(
+        arr("스텝 크기 {v1}가 변화 속도를 조절한다."),        # {v2} 유실
+        arr("스텝 크기 {v1}가 {v2}의 변화 속도를 조절한다."),
+    )
+    got = ask(cli, src)
+    assert sorted(PH.findall(got["0"])) == ["{v1}", "{v2}"]
+    assert "{v2}" in up.seen[1], f"어느 토큰이 빠졌는지 안 알려줬다: {up.seen[1][-300:]}"
+
+
+def test_leftover_english_triggers_a_retry_quoting_the_sentence(rig):
+    """반쪽 번역. 한글 비율만 보면 통과한다 — 실측 4.5%가 이렇게 샜다."""
+    half = ("정책은 상태를 행동으로 사상한다. The value of a state is the "
+            "expected return starting from that state. 이를 가치라 한다.")
+    whole = ("정책은 상태를 행동으로 사상한다. 어떤 상태의 가치는 그 상태에서 "
+             "시작하는 기대 이득이다. 이를 가치라 한다.")
+    up, cli = rig(arr(half), arr(whole))
+    got = ask(cli, "A policy maps states to actions. The value of a state is "
+                   "the expected return starting from that state. "
+                   "We call this the value.")
+    assert got["0"] == whole
+    assert "The value of a state" in up.seen[1], up.seen[1][-300:]
+
+
+def test_jondae_is_rejected(rig):
+    """한 화면 안에서 문체가 바뀌면 번역기 티가 난다."""
+    up, cli = rig(arr("정책은 상태를 행동으로 사상하는 함수입니다."),
+                  arr("정책은 상태를 행동으로 사상하는 함수이다."))
+    got = ask(cli, "A policy maps states to actions in this setting.")
+    assert got["0"].endswith("함수이다.")
+    assert len(up.seen) == 2
+
+
+def test_the_last_attempt_drops_the_glossary(rig):
+    """용어집 표가 자리표시자 유실의 원인일 때 힌트만 더 붙여야 소용없다."""
+    body_glossary = "\n## Glossary\n| policy | 정책 |\n"
+
+    def probe(_items):
+        return arr("policy maps states to actions here and now")   # 계속 영어
+
+    up, cli = rig(probe, probe, probe)
+    items = [{"id": 0, "input": "A policy maps states to actions.",
+              "layout_label": "plain text"}]
+    cli.post("/v1/chat/completions", json={"model": "m", "messages": [
+        {"role": "user", "content": "Translate into ko-KR." + body_glossary
+         + "\n\n" + json.dumps(items)}]})
+    assert "Glossary" in up.seen[0]
+    assert "Glossary" not in up.seen[-1], "마지막 시도에도 용어집이 붙어 있다"
+
+
+def test_a_hopeless_item_comes_back_as_the_source(rig):
+    """끝내 안 되면 **원문을 돌려준다.** 빈 문자열을 주면 페이지가 사라진다."""
+    src = "A policy maps states to actions in every state of the world."
+    up, cli = rig(arr("still english here and nothing else at all"))
+    got = ask(cli, src)
+    assert got["0"] == src
+    assert len(up.seen) >= 3, "포기하기 전에 세 번은 물어봐야 한다"
+
+
+def test_a_failed_item_is_not_cached(rig, tmp_path):
+    """실패를 캐시에 박으면 정상 모델로 다시 물어도 영어가 나온다."""
+    import sqlite3
+    src = "A policy maps states to actions in every state of the world."
+    _, cli = rig(arr("still english here and nothing else at all"))
+    ask(cli, src)
+    db = sqlite3.connect(tmp_path / "c.db")
+    rows = [r for (r,) in db.execute("select tgt from tr")]
+    assert not any("still english" in r for r in rows), rows
+
+
+def test_the_upstream_never_sees_broken_ligatures(rig):
+    """`di↵erent` 가 그대로 가면 번역 품질이 무너진다 — 원문 1,763곳."""
+    up, cli = rig(arr("서로 다른 정책들을 비교한다."))
+    ask(cli, "We compare di↵erent policies under the same conditions.")
+    assert "different" in up.seen[0], up.seen[0][-200:]
+    assert "di↵erent" not in up.seen[0]
