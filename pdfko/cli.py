@@ -54,10 +54,17 @@ def preflight(src: Path, first: int = 1, last: int | None = None
         n = d.page_count
         lo = max(0, min(first, n) - 1)
         hi = min(n, (last or n), lo + 40)
+        pages = max(hi, lo + 1) - lo
         sample = "".join(d[i].get_text() for i in range(lo, max(hi, lo + 1)))
     info(f"{n}쪽")
 
-    if len(sample.strip()) < 500:
+    # 문턱은 **표본 쪽수에 비례해야** 한다. 예전에는 고정 500자였다. 40쪽을
+    # 뽑을 때는 우습게 넘지만 `-p 13` 으로 한 쪽만 뽑으면 그 한 장이 500자를
+    # 채워야 했다. 슬라이드는 원래 글자가 적어서 — 실측한 발표자료 15쪽은
+    # 한 쪽도 500자에 닿지 않았다 — 어떤 쪽을 골라도 스캔본으로 거부됐다.
+    # README 가 새 사용자에게 처음 권하는 것이 `-p` 미리보기라 더 나빴다.
+    # 500/40 = 쪽당 12.5자. 그 비율을 그대로 쓴다.
+    if len(sample.strip()) < 12.5 * pages:
         # 판정만 하고 그대로 진행하면 500쪽 스캔본에 서너 시간을 쓰고
         # 영어 PDF 를 내놓는다. 여기서 멈춘다.
         warn("텍스트 레이어가 거의 없습니다 — 스캔한 PDF 로 보입니다.")

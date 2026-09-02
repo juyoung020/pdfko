@@ -1184,3 +1184,50 @@ def test_cli_and_web_agree_on_where_results_go():
     """CLI 는 ./<이름>_ko, 웹은 ~/pdfko-작업 이었다 — 두 군데로 흩어졌다."""
     from pdfko import paths, web
     assert web.ROOT == paths.out_base()
+
+
+# ── 스캔본 판정 ──────────────────────────────────────────────────────────
+def _slide_pdf(path, pages, chars_per_page):
+    """쪽당 글자 수를 정해 만든 PDF. 슬라이드처럼 글자가 적은 문서를 흉내낸다."""
+    import pymupdf
+    d = pymupdf.open()
+    for _ in range(pages):
+        p = d.new_page(width=720, height=405)
+        if chars_per_page:
+            p.insert_text((40, 60), "Policy gradient methods " * (chars_per_page // 24),
+                          fontsize=9)
+    d.save(path); d.close()
+    return path
+
+
+def test_a_single_slide_is_not_mistaken_for_a_scan(tmp_path):
+    """`-p 13` 으로 한 쪽만 돌릴 때 스캔본으로 거부하면 안 된다.
+
+    문턱이 표본 쪽수와 무관한 고정 500자였다. 40쪽을 뽑을 때는 우습게
+    넘지만 한 쪽만 뽑으면 슬라이드 한 장 분량이라 못 넘는다. 실측한
+    발표자료 15쪽은 **한 쪽도** 500자에 닿지 않아 전 쪽이 거부됐다.
+    README 가 새 사용자에게 처음 권하는 게 `-p` 미리보기라 더 나빴다.
+    """
+    from pdfko.cli import preflight
+    src = _slide_pdf(tmp_path / "deck.pdf", 15, 340)
+    _, _, has_text = preflight(src, first=13, last=13)
+    assert has_text, "글자가 있는 슬라이드 한 장을 스캔본으로 판정했다"
+
+
+def test_a_real_scan_is_still_refused(tmp_path):
+    """쪽당으로 환산해도 진짜 스캔본은 걸러야 한다.
+
+    500쪽 스캔본에 서너 시간을 쓰고 영어 PDF 를 내놓는 일을 막는 검사다.
+    """
+    from pdfko.cli import preflight
+    src = _slide_pdf(tmp_path / "scan.pdf", 40, 0)      # 텍스트 레이어 없음
+    _, _, has_text = preflight(src, first=1, last=40)
+    assert not has_text, "글자가 하나도 없는 문서를 통과시켰다"
+
+
+def test_the_whole_deck_still_passes(tmp_path):
+    """구간을 안 주면 예전처럼 전체를 보고 판정한다."""
+    from pdfko.cli import preflight
+    src = _slide_pdf(tmp_path / "deck.pdf", 15, 340)
+    _, _, has_text = preflight(src)
+    assert has_text
