@@ -29,11 +29,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import paths
+
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 # 임포트만으로 홈에 폴더를 만들지 않는다. 필요할 때 만든다.
-ROOT = Path.home() / "pdfko-작업"
+ROOT = paths.out_base()
 
 # 업로드 상한. 500쪽 교재가 보통 30~80MB 다.
 MAX_UPLOAD = int(os.environ.get("PDFKO_MAX_UPLOAD", 512 * 1024 * 1024))
@@ -570,7 +572,27 @@ poll();
 def main() -> int:
     import uvicorn
     ROOT.mkdir(parents=True, exist_ok=True)
-    print("  pdfko 웹 화면:  http://127.0.0.1:8000")
+    url = "http://127.0.0.1:8000"
+    print("  pdfko 웹 화면:  " + url)
     print("  작업 폴더:      ", ROOT)
+    # 딸깍 한 번으로 파일 넣는 화면까지 열려야 한다. 서버가 아직 안 떴을 때
+    # 브라우저가 먼저 붙으면 빈 화면이 뜨므로, 뜨는 걸 확인하고 연다.
+    # 데몬 스레드라 서버가 죽으면 같이 죽는다.
+    if os.environ.get("PDFKO_NO_BROWSER") != "1":
+        threading.Thread(target=_open_when_up, args=(url,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
     return 0
+
+
+def _open_when_up(url: str, timeout: float = 20.0) -> None:
+    """서버가 응답하기 시작하면 브라우저를 연다."""
+    import socket
+    import webbrowser
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.3)
+            if s.connect_ex(("127.0.0.1", 8000)) == 0:
+                webbrowser.open(url)
+                return
+        time.sleep(0.2)

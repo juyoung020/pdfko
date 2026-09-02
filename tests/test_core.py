@@ -1105,3 +1105,82 @@ def test_running_headers_are_not_treated_as_missed_translation():
         out = Path(t) / "h.pdf"
         d.save(out); d.close()
         assert recover.leftover_pages(out) == []
+
+
+def test_version_flag_reports_the_installed_version(capsys):
+    """`--version` 이 없으면 사용자가 어느 판을 쓰는지 말할 수 없다.
+
+    버전 문자열을 코드에 박지 않는다 — pyproject.toml 과 어긋나는 날이
+    오고, 버그 보고를 받아도 어느 쪽이 맞는지 알 수 없다.
+    """
+    import tomllib
+    from pdfko import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["--version"])
+    assert e.value.code == 0
+    got = capsys.readouterr().out.strip()
+    want = tomllib.loads(
+        (Path(__file__).parent.parent / "pyproject.toml").read_text()
+    )["project"]["version"]
+    assert got == f"pdfko {want}", got
+
+
+def test_exit_codes_are_documented_in_the_help():
+    """종료 코드를 문서화하지 않으면 자동화에서 쓸 수 없다."""
+    import argparse
+    import io
+    import contextlib
+    from pdfko import cli
+    buf = io.StringIO()
+    with contextlib.suppress(SystemExit), contextlib.redirect_stdout(buf):
+        cli.main(["--help"])
+    txt = buf.getvalue()
+    for code in ("0", "1", "2", "3", "130"):
+        assert f" {code} " in txt or f": {code} " in txt, (code, txt[-400:])
+    assert isinstance(argparse.ArgumentParser, type)
+
+
+# ── 결과가 저장되는 곳 ───────────────────────────────────────────────────
+def test_results_land_in_one_place_regardless_of_cwd(tmp_path, monkeypatch):
+    """어디서 명령을 쳐도 결과는 같은 곳에 모인다.
+
+    예전에는 `Path.cwd()` 였다. 저장소 안에서 번역을 돌리면 결과 PDF 가
+    저장소에 쌓이고, `.gitignore` 는 `cache/ logs/ work/ parts/` 만 막아서
+    번역본·품질보고서·용어집이 커밋 대기 목록에 끼어들었다. public
+    저장소에서 `git add .` 한 번이면 남의 교재가 올라간다.
+    """
+    from pdfko import paths
+    pkg = tmp_path / "repo" / "pdfko"
+    pkg.mkdir(parents=True)
+    (tmp_path / "repo" / "pyproject.toml").write_text("[project]\n")
+    assert paths._base_for(pkg, tmp_path / "home", None) == tmp_path / "repo" / "out"
+
+
+def test_an_installed_copy_never_writes_into_site_packages(tmp_path):
+    """소스 체크아웃이 아니면 홈으로 떨어진다.
+
+    `uv tool install pdfko` 로 깔면 패키지가 site-packages 에 있다. 거기에
+    번역 결과를 쓰면 권한 오류가 나거나, 나더라도 재설치 때 날아간다.
+    """
+    from pdfko import paths
+    pkg = tmp_path / "site-packages" / "pdfko"
+    pkg.mkdir(parents=True)                      # pyproject.toml 이 없다
+    got = paths._base_for(pkg, tmp_path / "home", None)
+    assert got == tmp_path / "home" / "pdfko" / "out"
+    assert "site-packages" not in str(got)
+
+
+def test_the_out_folder_can_be_moved_with_an_env_var(tmp_path):
+    """디스크가 작은 노트북에서 결과만 외장으로 뺄 수 있어야 한다."""
+    from pdfko import paths
+    pkg = tmp_path / "repo" / "pdfko"
+    pkg.mkdir(parents=True)
+    (tmp_path / "repo" / "pyproject.toml").write_text("[project]\n")
+    assert paths._base_for(pkg, tmp_path / "home",
+                           str(tmp_path / "외장")) == tmp_path / "외장"
+
+
+def test_cli_and_web_agree_on_where_results_go():
+    """CLI 는 ./<이름>_ko, 웹은 ~/pdfko-작업 이었다 — 두 군데로 흩어졌다."""
+    from pdfko import paths, web
+    assert web.ROOT == paths.out_base()

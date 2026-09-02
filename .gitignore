@@ -8,3 +8,4 @@ out/
 parts/
 *.gguf
 .pytest_cache/
+.coverage

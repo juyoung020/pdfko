@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import clipscan, client, glyphmap, qa, recover, runner
+from . import clipscan, client, glyphmap, paths, qa, recover, runner
 from .repair import looks_damaged
 
 _HANGUL = re.compile(r"[가-힣]")
@@ -128,10 +128,24 @@ def main(argv: list[str] | None = None) -> int:
         runner.stop_all()
 
 
+def _version() -> str:
+    """설치된 배포판의 버전. 소스에서 바로 돌릴 때도 죽지 않는다."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("pdfko")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
 def _main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="pdfko",
-        description="영문 교재와 논문을 레이아웃 그대로 한국어로 번역한다.")
+        description="영문 교재와 논문을 레이아웃 그대로 한국어로 번역한다.",
+        epilog="종료 코드: 0 성공 · 1 번역 실패 · 2 입력·설정 오류 · "
+               "3 모델 없음 · 130 사용자 중단")
+    # 버전은 설치 메타데이터에서 읽는다. 여기에 문자열을 박아 두면
+    # pyproject.toml 과 어긋나는 날이 오고, 어느 쪽이 맞는지 알 수 없다.
+    p.add_argument("--version", action="version", version=f"pdfko {_version()}")
     p.add_argument("pdf", type=Path, help="번역할 PDF 또는 PPTX")
     p.add_argument("-o", "--out", type=Path, help="결과 PDF 경로")
     p.add_argument("-w", "--work", type=Path, help="작업 디렉터리 (기본: ./<이름>_ko)")
@@ -275,7 +289,7 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"    … 외 {len(rows) - 10}개")
         return 0
 
-    work = (a.work or Path.cwd() / f"{src.stem}_ko").expanduser().resolve()
+    work = (a.work or paths.work_for(src)).expanduser().resolve()
     out = (a.out or work / f"{src.stem}_한국어.pdf").expanduser().resolve()
     if work.exists() and not work.is_dir():
         print(f"작업 경로가 디렉터리가 아닙니다: {work}")
@@ -608,7 +622,7 @@ def _run_pptx(src: Path, a) -> int:
         print("옛 형식(.ppt)은 읽을 수 없습니다. 파워포인트에서 .pptx 로 저장해주세요.")
         return 2
 
-    work = (a.work or Path.cwd() / f"{src.stem}_ko").expanduser().resolve()
+    work = (a.work or paths.work_for(src)).expanduser().resolve()
     out = (a.out or work / f"{src.stem}_한국어.pptx").expanduser().resolve()
     # 원본 위에 쓰면 안 된다. python-pptx 는 패키지를 메모리에 들고 있어서
     # 조용히 성공하고, 사용자의 원본이 사라진다. PDF 경로는 pymupdf 가
