@@ -69,6 +69,14 @@ SAMPLE_N = int(os.environ.get("SAMPLE_N", "8"))
 # 깨진 합자 사전. cli 가 원본을 훑어 만들어 두고 경로를 넘겨준다.
 GLYPHMAP = glyphmap.load(Path(os.environ["GLYPHMAP"])) if os.environ.get("GLYPHMAP") else {}
 
+# 원본 문서의 어휘. 낱말 한가운데서 잘려 온 조각을 알아보는 데 쓴다
+# (`truncated_tail`). 합자 사전과 같은 통로로 받는다 — 요청 본문만 봐서는
+# 알 수 없고 **원본을 봐야만** 판정할 수 있는 신호이기 때문이다.
+SOURCE_VOCAB: set[str] = (
+    set(Path(os.environ["PDFKO_VOCAB"]).read_text(encoding="utf-8").split())
+    if os.environ.get("PDFKO_VOCAB") and Path(os.environ["PDFKO_VOCAB"]).exists()
+    else set())
+
 # 사용자가 준 용어집·추가 프롬프트의 지문. cli/web 이 파일 내용을 해시해 넘긴다.
 #
 # 요청 본문에서 뽑으려 했다가 실패했다. BabelDOC 의 LLM 경로는 **system 메시지를
@@ -362,7 +370,7 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0, "fragment_retried": 0,
-         "ligature_dissolved": 0, "json_repaired": 0}
+         "ligature_dissolved": 0, "json_repaired": 0, "truncated": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -470,6 +478,82 @@ def too_wide(src: str, tgt: str) -> bool:
     """
     sw = est_width(src)
     return has_prose(src) and sw >= 10 and est_width(tgt) / sw > WIDTH_MAX
+
+
+def truncated_tail(src: str, vocab) -> str | None:
+    """낱말 한가운데서 잘려 온 조각이면 그 꼬리 낱말을, 아니면 None.
+
+    babeldoc 이 문단을 자를 때 **낱말 안쪽**을 끊는 일이 있다. 실측(L03
+    발표자료): 원본 span 은 `'Understand '` 로 멀쩡했는데 프록시에 도착했을
+    땐 `'○ Under'` 였다. 번역기에게 `Under` 는 정상 영어 낱말이라 성실하게
+    `하위 항목` 으로 옮겼고, 결과물에 `하위 항목stand MDP` 가 찍혔다.
+
+    짝 조각(`stand MDP…`)은 **같은 배치에 오지 않는다.** 그래서 이어붙일
+    수 없고, 글자만 봐서는 `Under`(잘린 것)와 `Reward`(멀쩡한 라벨)를 가를
+    수 없다. 유일하게 믿을 만한 신호는 **원본 문서의 어휘**다 — `under` 는
+    이 문서에 독립된 낱말로 없고 `understand` 의 앞부분일 뿐이다.
+
+    135개 항목에 돌려 오탐 0, 진짜 잘린 조각 4개를 잡았다 — `under`
+    (understand), `goa`(goal), `fact`(factor), `forma`(formalised).
+    어휘 목록이 없으면 아무것도 판정하지 않는다 — 추측으로 막으면 멀쩡한
+    짧은 라벨까지 번역을 건너뛴다.
+    """
+    if not vocab:
+        return None
+    # 자리표시자·서식 태그를 먼저 걷어낸다. `{v1}` 의 `v` 가 낱말로 잡히면
+    # `value` 의 앞부분이라며 멀쩡한 수식 항목을 잘린 조각으로 판정한다.
+    body = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or ""))
+    toks = _WORDISH.findall(body)
+    if not toks:
+        return None
+    tail = toks[-1].lower()
+    if tail in vocab:
+        return None
+    return tail if any(w.startswith(tail) and len(w) > len(tail)
+                       for w in vocab) else None
+
+
+def rejoin_cut_words(items: list[dict], vocab) -> list[dict]:
+    """이웃한 두 항목에 걸쳐 잘린 낱말을 원래대로 되붙인다.
+
+    babeldoc 이 한 줄을 조각낼 때 경계가 **낱말 안쪽**에 떨어지는 일이 있다.
+    실측(L03 2쪽) — 한 요청 안에 나란히 왔다:
+
+        id2  '○ Under'
+        id3  "<style…>stand </style>MDP(Markov Decision Process) ⇐ Today's goa"
+        id4  'l'
+
+    조각마다 따로 번역되어 `하위 항목` + `스탠드 … 골라인` 이 나왔다. 조각을
+    그냥 영어로 통과시키면 번역이 빠지고, 따로 번역하면 뜻이 무너진다.
+    **되붙여서 한 낱말로 만든 뒤 번역해야** 한다.
+
+    근거는 원본 어휘다 — 앞 조각의 꼬리와 뒤 조각의 머리를 이었을 때 이
+    문서의 낱말이 되면 잘린 것이고, 안 되면 손대지 않는다. 꼬리가 그 자체로
+    낱말이면(`policy` + `reward…`) 건드리지 않는다.
+    """
+    if not vocab or len(items) < 2:
+        return items
+    # 서식 태그를 **같은 길이의 공백**으로 가린다. 길이가 달라지면 찾은
+    # 위치가 원본과 어긋나, `<style id='1'>` 의 `style` 을 낱말로 알고
+    # 지워 버린다(실측: `< id='1'>stand` 로 태그가 깨졌다).
+    mask = lambda t: STYLE_RE.sub(lambda m: " " * len(m.group()), t)   # noqa: E731
+    out = [dict(it) for it in items]
+    for i in range(len(out) - 1):
+        a, b = out[i].get("input") or "", out[i + 1].get("input") or ""
+        ta = list(_WORDISH.finditer(mask(a)))
+        hb = _WORDISH.search(mask(b))
+        if not ta or not hb:
+            continue
+        tail, head = ta[-1].group(), hb.group()
+        if tail.lower() in vocab:
+            continue                       # 그 자체로 낱말이면 잘린 게 아니다
+        if (tail + head).lower() not in vocab:
+            continue                       # 이어도 낱말이 안 되면 남의 일이다
+        # 앞 조각의 꼬리를 온전한 낱말로, 뒤 조각의 머리는 걷어낸다.
+        m = ta[-1]
+        out[i]["input"] = a[:m.start()] + tail + head + a[m.end():]
+        out[i + 1]["input"] = (b[:hb.start()] + b[hb.end():]).lstrip()
+    return out
 
 
 class Reason(str):
@@ -773,6 +857,18 @@ async def chat(request: Request):
             fixed[arr_idx] = {**m, "content": swap_array(m["content"], a0, a1, items)}
             a1 = a0 + len(json.dumps(items, ensure_ascii=False, indent=1))
 
+    # 낱말 한가운데서 잘린 조각을 **번역하기 전에** 되붙인다. 뒤에서 고치려
+    # 들면 이미 `하위 항목` + `스탠드` 로 따로 번역된 뒤라 손쓸 수가 없다.
+    if SOURCE_VOCAB and arr_idx >= 0 and items:
+        joined = rejoin_cut_words(items, SOURCE_VOCAB)
+        if joined != items:
+            STATS["truncated"] += sum(1 for a, b in zip(items, joined)
+                                      if a.get("input") != b.get("input"))
+            items = joined
+            m = fixed[arr_idx]
+            fixed[arr_idx] = {**m, "content": swap_array(m["content"], a0, a1, items)}
+            a1 = a0 + len(json.dumps(items, ensure_ascii=False, indent=1))
+
     user = "\n".join(m.get("content", "") for m in fixed if m.get("role") == "user")
     if items is None:
         items = []
@@ -952,6 +1048,7 @@ async def chat(request: Request):
         if too_wide(it.get("input", ""), rebuilt):
             return None, 0
         return rebuilt, hit
+
 
     # (a) 자리표시자가 아주 많은 문단은 **조각내서** 보낸다.
     #     `{v1}` 사이의 본문만 번역하고 자리표시자는 우리가 원위치에 다시 끼운다.

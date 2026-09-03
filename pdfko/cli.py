@@ -19,6 +19,7 @@ from . import clipscan, client, glyphmap, paths, qa, recover, runner
 from .repair import looks_damaged
 
 _HANGUL = re.compile(r"[가-힣]")
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
 
 
 def _c(s: str, code: str) -> str:
@@ -117,6 +118,23 @@ def _parse_pages(spec: str | None, total: int) -> tuple[int, int] | str:
     if first > last:
         return f"번역할 쪽이 없습니다: {spec} (전체 {total}쪽)"
     return first, last
+
+
+def build_vocab(src: Path, out: Path) -> int:
+    """원본 문서에 실제로 쓰인 낱말을 모아 둔다. → 낱말 수
+
+    프록시가 **낱말 한가운데서 잘려 온 조각**을 알아보는 데 쓴다. 요청 본문만
+    봐서는 `Under`(잘린 것)와 `Reward`(멀쩡한 라벨)를 가를 수 없고, 원본에
+    그 낱말이 독립적으로 존재하는지를 봐야만 알 수 있다. 합자 사전과 같은
+    통로로 넘긴다.
+    """
+    import pymupdf
+    words: set[str] = set()
+    with pymupdf.open(src) as d:
+        for pg in d:
+            words.update(w.lower() for w in _WORD_RE.findall(pg.get_text()))
+    out.write_text("\n".join(sorted(words)), encoding="utf-8")
+    return len(words)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -357,11 +375,15 @@ def _main(argv: list[str] | None = None) -> int:
             gm_path = work / "glyphmap.json"
             glyphmap.save(gm, gm_path)
             srv_glyphmap = gm_path
+
             info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았습니다")
 
         step("서버 기동")
         srv = runner.Server(work, a.model)
+        vocab_path = work / "vocab.txt"
+        n_vocab = build_vocab(src, vocab_path)
         srv.glyphmap = srv_glyphmap
+        srv.vocab = vocab_path if n_vocab else None
         # 용어집·프롬프트가 바뀌면 캐시가 무효화되어야 한다. 요청 본문에서는
         # 뽑을 수 없다 — BabelDOC 은 그것들을 user 메시지 안에 말아 넣는다.
         srv.start_ollama()

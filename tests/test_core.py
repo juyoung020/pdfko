@@ -1147,3 +1147,85 @@ def test_many_stray_words_is_still_damage():
     v = qa.inspect_page(orig[0], trans[0], 1)
     assert v.broken and any("이탈" in r for r in v.reasons), v.reasons
     orig.close(); trans.close()
+
+
+# ── 낱말 한가운데서 잘려 온 조각 ─────────────────────────────────────────
+_VOCAB = {"understand", "mdp", "markov", "decision", "process", "policy",
+          "reward", "formalised", "problems", "almost", "all", "can", "be",
+          "reinforcement", "learning", "value"}
+
+
+@pytest.mark.parametrize("src,want", [
+    ("○ Under", "under"),                       # understand 의 앞부분
+    ("“Almost all RL problems can be forma", "forma"),   # formalised 의 앞부분
+    ("Reinforcement Learning", None),           # 멀쩡한 낱말들
+    ("○ Understand MDP", None),
+    ("policy", None),
+    ("", None),
+    ("{v1} + {v2}", None),                      # 낱말이 없다
+])
+def test_a_word_cut_in_half_is_recognised(src, want):
+    """babeldoc 이 낱말 한가운데서 자른 조각을 알아본다.
+
+    실측(L03 발표자료): 원본 span 은 `'Understand '` 로 멀쩡했는데 프록시에
+    도착했을 땐 `'○ Under'` 였다. 번역기 입장에서 `Under` 는 정상 영어
+    낱말이라 성실하게 `하위 항목` 으로 옮겼고, 결과물에 `하위 항목stand MDP`
+    가 찍혔다. 짝 조각은 같은 배치에 오지 않아 이어붙일 수도 없다.
+
+    유일하게 믿을 만한 신호는 **원본 문서의 어휘**다 — `under` 는 이 문서에
+    독립된 낱말로 없고 `understand` 의 앞부분일 뿐이다. 129개 항목에 돌려
+    오탐 0, 진짜 잘린 조각 2개를 잡았다.
+    """
+    assert proxy.truncated_tail(src, _VOCAB) == want
+
+
+def test_without_a_vocabulary_nothing_is_flagged():
+    """어휘 목록을 못 받았으면 아무것도 잘렸다고 하지 않는다.
+
+    이 신호는 원본을 봐야만 성립한다. 목록이 없을 때 추측으로 막으면
+    멀쩡한 짧은 라벨까지 번역을 건너뛴다.
+    """
+    assert proxy.truncated_tail("○ Under", set()) is None
+    assert proxy.truncated_tail("○ Under", None) is None
+
+
+# ── 두 항목에 걸쳐 잘린 낱말을 되붙인다 ──────────────────────────────────
+def test_a_word_split_across_two_items_is_rejoined():
+    """`Under` + `stand …` → `Understand` + `…`
+
+    실측(L03 2쪽): babeldoc 이 한 줄을 세 조각으로 잘랐고, 그 경계가
+    **낱말 안쪽**이었다.
+
+        id2  '○ Under'
+        id3  "<style…>stand </style>MDP(Markov Decision Process) ⇐ Today's goa"
+        id4  'l'
+
+    조각마다 따로 번역되어 `하위 항목` + `스탠드 … 골라인` 이 나왔다.
+    이어붙일 근거는 원본 어휘다 — `under`+`stand` 가 이 문서의 낱말
+    `understand` 를 이룬다. 이루지 않으면 건드리지 않는다.
+    """
+    from pdfko.proxy import rejoin_cut_words
+    vocab = {"understand", "mdp", "markov", "decision", "process", "goal"}
+    items = [{"id": 0, "input": "○ Under"},
+             {"id": 1, "input": "stand MDP ⇐ Today's goa"},
+             {"id": 2, "input": "l"}]
+    out = rejoin_cut_words(items, vocab)
+    assert out[0]["input"] == "○ Understand"
+    assert out[1]["input"] == "MDP ⇐ Today's goal"
+    assert out[2]["input"] == ""
+
+
+def test_neighbours_that_do_not_form_a_word_are_left_alone():
+    """우연히 이어 붙였을 때 낱말이 되지 않으면 손대지 않는다."""
+    from pdfko.proxy import rejoin_cut_words
+    vocab = {"policy", "reward", "value"}
+    items = [{"id": 0, "input": "The policy"}, {"id": 1, "input": "reward is high"}]
+    out = rejoin_cut_words(items, vocab)
+    assert out[0]["input"] == "The policy"
+    assert out[1]["input"] == "reward is high"
+
+
+def test_rejoining_needs_a_vocabulary():
+    from pdfko.proxy import rejoin_cut_words
+    items = [{"id": 0, "input": "○ Under"}, {"id": 1, "input": "stand MDP"}]
+    assert rejoin_cut_words(items, set())[0]["input"] == "○ Under"

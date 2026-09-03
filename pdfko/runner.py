@@ -95,6 +95,7 @@ class Server:
         self.op = ollama_port
         self.pp = proxy_port
         self.glyphmap: Path | None = None   # 깨진 합자 사전 (cli 가 채운다)
+        self.vocab: Path | None = None      # 원본 어휘 (cli 가 채운다)
         self.user_sig: str = ""             # 추가 지시문 지문 (cli 가 채운다)
         self.borrowed = False               # 이미 떠 있던 ollama 를 빌려 쓰는가
         self._procs: list[subprocess.Popen] = []
@@ -330,6 +331,10 @@ class Server:
             env["GLYPHMAP"] = str(self.glyphmap)
         else:
             env.pop("GLYPHMAP", None)   # 부모 환경에 남은 낡은 사전을 물려주지 않는다
+        if self.vocab and self.vocab.exists():
+            env["PDFKO_VOCAB"] = str(self.vocab)
+        else:
+            env.pop("PDFKO_VOCAB", None)
         env["USER_RULES"] = self.user_sig
         log = open(self.work / "logs" / "proxy.log", "ab")
         self._procs.append(subprocess.Popen(

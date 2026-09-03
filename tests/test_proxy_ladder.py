@@ -352,3 +352,35 @@ def test_an_item_making_progress_still_gets_its_third_try(rig):
     assert got["0"] == "스텝 크기 {v1}가 {v2} 속도를 정한다.", got
     whole = [s for s in up.seen if '"layout_label": "fragment"' not in s]
     assert len(whole) == 3, len(whole)
+
+
+def test_a_word_split_across_items_is_joined_before_translating(rig, monkeypatch):
+    """잘린 낱말은 **번역 전에** 되붙인다. 영어로 남기는 것은 답이 아니다.
+
+    실측(L03 2쪽): `○ Under` 와 `stand MDP…` 가 한 요청에 나란히 왔는데
+    조각마다 따로 번역되어 `하위 항목` + `스탠드 …` 가 나왔다. 뒤에서
+    고치려 들면 이미 따로 번역된 뒤라 손쓸 수가 없다.
+    """
+    monkeypatch.setattr(proxy, "SOURCE_VOCAB",
+                        {"understand", "mdp", "markov", "process"})
+    up, cli = rig(arr("MDP 를 이해한다", "마르코프 과정"))
+    ask(cli, "○ Under", "stand MDP")
+    sent, _, _ = proxy.extract_array(up.seen[0])
+    assert sent[0]["input"] == "○ Understand", sent
+    assert sent[1]["input"] == "MDP", sent
+
+
+def test_a_real_short_label_is_still_translated(rig, monkeypatch):
+    """멀쩡한 짧은 라벨은 그대로 번역한다 — 통과 규칙이 넓으면 안 된다."""
+    monkeypatch.setattr(proxy, "SOURCE_VOCAB", {"understand", "policy", "reward"})
+    up, cli = rig(arr("정책"))
+    assert ask(cli, "policy")["0"] == "정책"
+    assert len(up.seen) == 1
+
+
+def test_without_a_vocabulary_everything_is_translated(rig, monkeypatch):
+    """어휘 목록이 없으면 이 규칙은 아예 작동하지 않는다."""
+    monkeypatch.setattr(proxy, "SOURCE_VOCAB", set())
+    up, cli = rig(arr("하위 항목"))
+    ask(cli, "○ Under")
+    assert len(up.seen) == 1, "목록이 없는데 통과시켰다"
