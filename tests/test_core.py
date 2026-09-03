@@ -1373,3 +1373,35 @@ def test_the_gap_left_by_a_rejoin_survives_into_a_real_span():
     # 일반 공백이 아니라 `\xa0`. babeldoc 은 span 앞머리의 일반 공백을
     # 잘라낸다 — 내용 있는 span 안으로 옮겨도 마찬가지였다(실측).
     assert ">\u00a0MDP<" in out[1]["input"], repr(out[1]["input"])
+
+
+def test_the_overlap_detector_actually_fires():
+    """겹침·줄충돌 검사가 실제로 도는지 못박아 둔다.
+
+    실측 25쪽에서 두 값이 **정확히 0.0000** 이었다. 문턱 아래가 아니라 0이라,
+    검사가 아예 안 도는 것인지 문서에 정말 겹침이 없는 것인지 알 수 없었다.
+    일부러 낱말을 포갠 쪽을 넣어 확인했다 — 잡는다.
+
+    그러므로 문턱(겹침 2%·줄충돌 4%)은 손댈 근거가 없다. 과민한 것도
+    느슨한 것도 아니고, 잡을 것이 없었을 뿐이다. 이 시험이 없으면 다음에
+    누군가 같은 의심을 다시 하게 된다.
+    """
+    import pymupdf
+    from pdfko import qa
+
+    def page(pile):
+        d = pymupdf.open()
+        p = d.new_page(width=400, height=300)
+        for i in range(20):
+            x = 40 if pile and i >= 10 else 40 + (i % 5) * 60
+            y = 60 if pile and i >= 10 else 60 + (i // 5) * 30
+            p.insert_text((x, y), f"word{i}", fontsize=10)
+        return d, p
+
+    o, op = page(False)
+    t, tp = page(True)
+    v = qa.inspect_page(op, tp, 1)
+    assert v.overlap > qa.OVERLAP_MAX, v.overlap
+    assert v.collision > qa.COLLISION_MAX, v.collision
+    assert v.broken and any("겹침" in r for r in v.reasons), v.reasons
+    o.close(); t.close()
