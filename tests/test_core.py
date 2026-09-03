@@ -1788,3 +1788,37 @@ def test_a_retranslation_that_would_wreck_the_page_is_not_spliced(tmp_path,
     assert [r.action for r in recs] == ["kept"], recs
     assert "레이아웃" in recs[0].note, recs[0].note
     assert trans.read_bytes() == before, "망가질 쪽을 이미 끼워 넣었다"
+
+
+# ── 낱말 한가운데서 잘려 온 조각은 번역하지 않는다 ──────────────────────
+def test_a_cut_word_fragment_is_left_alone():
+    """`Agent` 가 `Age` + `nt` 로 잘려 오면 `Age` 를 번역하면 안 된다.
+
+    실측(2쪽 부제). 번역 엔진이 낱말 한가운데를 끊어 `Age` 를 홀로 보냈다.
+    번역기에게 `Age` 는 정상 영어 낱말이라 성실하게 옮겼고, 조판된 쪽에는
+    이렇게 찍혔다:
+
+        원본  'Agent vs Workflow — 목표, 환경, 자율성, 성공과 실패'
+        결과  '연령nt vs Workflow — 목표, 환경, 자율성, 성공과 실패'
+
+    가르는 근거는 원본 문서의 어휘다 — `age` 는 이 문서에 독립된 낱말로 없고
+    `agent` 의 앞부분일 뿐이다. 그대로 두면 뒤 조각 `nt` 가 바로 이어져
+    `Agent` 로 읽힌다.
+
+    판정 함수(`truncated_tail`)는 진작 있었는데 **아무도 부르지 않았다.**
+    있는 줄 알고 지나간 자리다.
+
+    다만 항목에 낱말이 하나뿐일 때만 통째로 넘긴다. 긴 항목까지 넘기면
+    (`search(query), open_document(id), run_pytho`) 멀쩡한 앞부분까지 영어로
+    남는다.
+    """
+    from pdfko.proxy import is_cut_fragment
+
+    vocab = {"agent", "workflow", "python", "goal", "tool"}
+    assert is_cut_fragment("Age", vocab) is True         # agent 의 앞부분
+    assert is_cut_fragment("Work", vocab) is True        # workflow 의 앞부분
+
+    assert is_cut_fragment("Agent", vocab) is False      # 온전한 낱말
+    assert is_cut_fragment("Goal", vocab) is False
+    assert is_cut_fragment("Age of tools", vocab) is False   # 낱말이 여럿
+    assert is_cut_fragment("Age", set()) is False        # 어휘가 없으면 판정 안 함

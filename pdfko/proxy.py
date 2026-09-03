@@ -376,7 +376,8 @@ STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0, "fragment_retried": 0,
          "ligature_dissolved": 0, "json_repaired": 0, "truncated": 0,
-         "already_korean": 0, "nothing_to_translate": 0}
+         "already_korean": 0, "nothing_to_translate": 0,
+         "cut_fragment": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -555,6 +556,29 @@ def truncated_tail(src: str, vocab) -> str | None:
         return None
     return tail if any(w.startswith(tail) and len(w) > len(tail)
                        for w in vocab) else None
+
+
+def is_cut_fragment(src: str, vocab) -> bool:
+    """항목이 통째로 **낱말 한가운데서 잘려 온 조각**인가.
+
+    실측(2쪽 부제). 엔진이 `Agent` 를 `Age` + `nt` 로 끊어 `Age` 를 홀로
+    보냈다. 번역기에게 `Age` 는 정상 영어 낱말이라 성실하게 옮겼다:
+
+        원본  'Agent vs Workflow — 목표, 환경, 자율성, 성공과 실패'
+        결과  '연령nt vs Workflow — 목표, 환경, 자율성, 성공과 실패'
+
+    그대로 두면 뒤 조각 `nt` 가 바로 이어져 `Agent` 로 읽힌다. 판정 근거는
+    원본 어휘다(`truncated_tail` 참고).
+
+    낱말이 하나뿐일 때만 본다. 긴 항목까지 넘기면 멀쩡한 앞부분까지 영어로
+    남는다 — `search(query), open{v1}document(id), run{v2}pytho` 는 뒤가
+    잘렸어도 앞은 번역해야 한다.
+    """
+    if not vocab:
+        return False
+    body = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or ""))
+    return (len(_WORDISH.findall(body)) == 1
+            and truncated_tail(src, vocab) is not None)
 
 
 def rejoin_cut_words(items: list[dict], vocab) -> list[dict]:
@@ -1181,9 +1205,17 @@ async def chat(request: Request):
     # 고쳐 놓는다 — 실측으로 129개 중 36개(27%)가 그랬다.
     for it in (items or []):
         iid = str(it.get("id"))
-        if iid not in results and already_korean(it.get("input", "")):
+        if iid in results:
+            continue
+        if already_korean(it.get("input", "")):
             results[iid] = it.get("input", "")
             STATS["already_korean"] += 1
+        # 낱말 한가운데서 잘려 온 조각도 보내지 않는다. 번역기에게 `Age` 는
+        # 정상 낱말이라 `연령` 으로 옮겨 버린다 — 뒤 조각 `nt` 와 붙어
+        # `연령nt` 가 된다.
+        elif is_cut_fragment(it.get("input", ""), SOURCE_VOCAB):
+            results[iid] = it.get("input", "")
+            STATS["cut_fragment"] += 1
     if items:
         for it in items:
             iid = str(it.get("id"))
@@ -1262,6 +1294,11 @@ async def chat(request: Request):
         # 로 돌아왔다.
         if body is not None and nothing_to_translate(body):
             STATS["nothing_to_translate"] += 1
+            return JSONResponse(_shape(body))
+        # 낱말 한가운데서 잘려 온 조각도 마찬가지다 — `Age` 를 보내면
+        # `연령` 이 돌아온다.
+        if body and is_cut_fragment(body, SOURCE_VOCAB):
+            STATS["cut_fragment"] += 1
             return JSONResponse(_shape(body))
         try:
             raw = await call(out_msgs, temps[0], max_tok)
