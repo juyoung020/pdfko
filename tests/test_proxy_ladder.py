@@ -384,3 +384,56 @@ def test_without_a_vocabulary_everything_is_translated(rig, monkeypatch):
     up, cli = rig(arr("하위 항목"))
     ask(cli, "○ Under")
     assert len(up.seen) == 1, "목록이 없는데 통과시켰다"
+
+
+def test_a_cached_translation_does_not_override_korean_passthrough(rig, monkeypatch):
+    """이미 한국어라 통과시킨 항목을 캐시가 덮어쓰면 안 된다.
+
+    실측(AI Agent 1주차 7쪽). 원본이 이미 한국어인 줄이었다.
+
+        원본  '• 위 순서로 실행된다면 LLM 모델은 실제 실행 경로를 …'
+        결과  '• 에 명시된 순서대로 실행된다면 LLM 모델은 …'   ← 주어가 사라졌다
+
+    `already_korean` 은 제대로 True 를 냈다. 그런데 그 **뒤에** 도는 캐시
+    조회가 조건 없이 `results` 를 덮어써서, 예전에 만들어진 잘못된 번역이
+    이겼다. 통과 판정이 캐시보다 뒤에 있으면 아무 일도 하지 않는 셈이다.
+    """
+    ko = "위 순서로 실행된다면 모델은 경로를 선택하지 않는다"
+    monkeypatch.setattr(proxy, "cache_get", lambda k: "덮어쓴 잘못된 번역")
+    up, cli = rig(arr("이건 보내지 말았어야 한다"))
+    got = ask(cli, ko)
+    assert got["0"] == ko, got
+    assert not up.seen, "이미 한국어인데 모델에게 보냈다"
+
+
+def test_a_plain_prompt_request_is_guarded_too(rig, monkeypatch):
+    """babeldoc 은 JSON 배열 말고 **평문 프롬프트**로도 보낸다.
+
+    실측(AI Agent 1주차 7쪽) 표본 5건 중 3건이 평문이었다. 그 경로에서는
+    `items` 가 비어서 우리 보호 장치가 **하나도 걸리지 않는다.** 이미
+    한국어인 문장이 그대로 모델에 갔고, 이렇게 고쳐져 돌아왔다.
+
+        원본  '위 순서로 실행된다면 LLM 모델은 실제 실행 경로를 …'
+        결과  '에 명시된 순서대로 실행될 경우 LLM 모델은 …'   ← 주어가 사라졌다
+
+    번역할 텍스트는 `Now translate the following text:` 뒤에 온다.
+    """
+    ko = "위 순서로 실행된다면 모델은 경로를 선택하지 않는다"
+    up, cli = rig("엉뚱하게 바꾼 문장")
+    r = cli.post("/v1/chat/completions", json={"model": "m", "messages": [
+        {"role": "user", "content":
+         "You are a translator.\n\n## Output\n\n"
+         "Now translate the following text:\n\n" + ko}]})
+    assert r.status_code == 200, r.text
+    got = r.json()["choices"][0]["message"]["content"]
+    assert ko in got, got
+    assert not up.seen, "이미 한국어인데 모델에게 보냈다"
+
+
+def test_a_plain_prompt_in_english_still_goes_to_the_model(rig):
+    """영어 평문은 그대로 번역기에 보낸다 — 통과 규칙이 넓으면 안 된다."""
+    up, cli = rig("정책은 상태를 행동으로 사상한다.")
+    cli.post("/v1/chat/completions", json={"model": "m", "messages": [
+        {"role": "user", "content":
+         "Now translate the following text:\n\nA policy maps states to actions."}]})
+    assert len(up.seen) == 1

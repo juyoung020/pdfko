@@ -661,6 +661,27 @@ def restore_gaps(src: str, columns) -> str | None:
     return columns.get(re.sub(r"\s+", " ", src).strip())
 
 
+_PLAIN_MARK = re.compile(
+    r"Now translate the following text:\s*\n+", re.I)
+
+
+def plain_target(user_msg: str) -> str | None:
+    """평문 프롬프트에서 **번역할 본문만** 떼어 낸다. 없으면 None.
+
+    babeldoc 은 JSON 배열 말고 평문으로도 보낸다. 실측(AI Agent 1주차 7쪽)
+    표본 5건 중 3건이 평문이었다. 그 경로에서는 `items` 가 비어서 우리
+    보호 장치가 **하나도 걸리지 않는다** — 이미 한국어인 문장이 그대로
+    모델에 갔고 글쓴이의 문장이 고쳐져 돌아왔다.
+
+        원본  '위 순서로 실행된다면 LLM 모델은 실제 실행 경로를 …'
+        결과  '에 명시된 순서대로 실행될 경우 LLM 모델은 …'
+    """
+    m = None
+    for m in _PLAIN_MARK.finditer(user_msg or ""):
+        pass                      # 마지막 표식 뒤가 본문이다
+    return user_msg[m.end():].strip() if m else None
+
+
 class Reason(str):
     """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
 
@@ -1024,9 +1045,14 @@ async def chat(request: Request):
             STATS["already_korean"] += 1
     if items:
         for it in items:
+            iid = str(it.get("id"))
+            if iid in results:
+                continue        # 이미 한국어라 통과시킨 것을 덮지 않는다.
+                                # 캐시에는 이 판정이 생기기 전에 만들어진
+                                # 잘못된 번역이 들어 있을 수 있다.
             hit = cache_get(item_key(it.get("input", "")))
             if hit is not None:
-                results[str(it.get("id"))] = hit
+                results[iid] = hit
                 STATS["cache_hits"] += 1
         if len(results) == len(items):      # 전부 캐시에 있었다
             return JSONResponse(_shape(json.dumps(
@@ -1083,7 +1109,13 @@ async def chat(request: Request):
     max_tok = body.get("max_tokens", 4096)
     temps = [0.2, 0.1, 0.0]
 
-    if not items:  # JSON 프로토콜이 아닌 요청(탐침 등)은 그대로 통과
+    if not items:  # JSON 프로토콜이 아닌 요청(탐침 등)
+        # 평문이라도 이미 한국어면 보내지 않는다. 이 경로에는 항목 단위
+        # 보호 장치가 걸리지 않아, 여태 글쓴이의 한국어가 여기서 고쳐졌다.
+        body = plain_target(user)
+        if body and already_korean(body):
+            STATS["already_korean"] += 1
+            return JSONResponse(_shape(body))
         try:
             raw = await call(out_msgs, temps[0], max_tok)
         except Exception as e:
