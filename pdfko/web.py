@@ -213,32 +213,16 @@ def _run(job: Job, pages: str) -> None:
                 mx = qa.mixed_language_figures(d[v.page - 1])
                 if mx:
                     v.reasons.append(f"그림혼재{mx}")
-        severe = [v for v in verdicts
-                  if v.overlap > 0.15 or v.outside > 0.10 or v.collision > 0.10]
-
         # 복구에 들어가기 **전에** 결과물을 등록한다. 예전에는 복구가 끝난 뒤에
         # 등록해서, 마지막 단계에서 예외가 나면 몇 시간 번역한 결과가 통째로
         # 사라지고 내려받기도 보고서도 없이 "실패"만 남았다.
         job.out = out
+        # 좌표 판정으로는 손대지 않는다 — 상자를 넘었다는 이유로 부르면
+        # 잘된 번역을 되돌린다(cli 쪽 주석 참고). 검사 결과는 보고서에만.
         recs = []
-        if severe:
-            job.say("자동 복구", f"{len(severe)}쪽 되살리는 중", 96)
-            try:
-                recs = recover.repair_pages(
-                    out, src, severe, offset, src, job.work,
-                    model="hy-mt2-7b", proxy_port=srv.pp,
-                    on_step=lambda p, what: job.say(
-                        "자동 복구", f"{p}쪽 {what}" if p else what, 96))
-            except Exception as e:
-                job.log.append(f"자동 복구 실패({type(e).__name__}: {e}) — "
-                               f"번역본은 그대로 내려받을 수 있습니다")
-                recs = [recover.Recovery(page=v.page, orig_page=v.page + offset,
-                                         reasons=v.reasons, action="",
-                                         note=f"복구 중단: {type(e).__name__}: {e}")
-                        for v in severe]
 
-        # 영어가 남은 쪽은 좌표 판정에 안 걸린다. 겹치지도 밀려나지도 않은 채
-        # 문장만 영어로 남아 있기 때문이다. 따로 훑어 다시 번역한다.
+        # 영어가 그대로 남은 쪽. 이건 번역이 실제로 안 된 것이다. 겹치지도
+        # 밀려나지도 않은 채 문장만 영어라 좌표 판정에는 걸리지 않는다.
         left = recover.leftover_pages(out)
         if left:
             job.say("영어가 남은 쪽 재번역", f"{len(left)}쪽", 97)

@@ -1,17 +1,18 @@
-"""파손된 페이지를 자동으로 되살린다.
+"""영어가 남은 페이지만 다시 번역한다.
 
-## 설계 원칙
+## 무엇을 고치고 무엇을 안 고치나
 
-문단 단위로 아무리 검증해도 번역 엔진 내부의 조판 실패는 잡히지 않는다.
-그래서 **렌더링된 결과를 보고 페이지 단위로 판정**하고, 파손된 페이지만
-골라 되살린다. 되살리는 방법은 단계적으로 약해진다.
+고치는 것은 하나다 — **영어가 그대로 남은 쪽.** 번역이 실제로 안 된 것이라
+다시 물어볼 이유가 분명하고, 나아졌는지도 같은 잣대로 확인할 수 있다.
 
-    1단계  좁은 번역   그 페이지만 '간결하게' 다시 번역해 길이를 줄인다
-    2단계  원문 유지   그래도 안 되면 원문 페이지를 그대로 쓴다
+자리가 어긋난 쪽(겹침·영역이탈·줄충돌)은 **손대지 않는다.** 예전에는 그것도
+고쳤다 — 간결하게 다시 번역하고, 그래도 안 되면 영어 원문을 도로 붙였다.
+그런데 한국어가 영어보다 길어 상자를 조금 넘는 것은 흔한 일이라, 잘된 번역이
+영어로 되돌아가는 일이 생겼다. 번역이 처음부터 잘되면 쓸모없는 장치이면서,
+잘됐을 때 오히려 손해를 끼쳤다.
 
-2단계까지 가면 그 페이지는 영어로 남는다. 읽을 수 없는 한국어보다 낫지만,
-**사용자에게 반드시 알려야 한다.** 조용히 영어로 바꿔치기하면 사용자는
-"번역이 빠졌다"고 느낀다. 그래서 보고서에 남기고, 원하면 페이지에 표시도 한다.
+검사는 그대로 한다(23쪽에 0.0초). 다만 보고서에 적어 사람이 보게 할 뿐,
+행동의 근거로 삼지 않는다.
 """
 
 from __future__ import annotations
@@ -30,26 +31,11 @@ class Recovery:
     page: int              # 번역본 쪽번호 (1부터)
     orig_page: int         # 대응하는 원본 쪽번호 (1부터)
     reasons: list[str]
-    action: str            # "retranslated" | "reverted" | "kept"
+    action: str            # "retranslated" | "kept"
     note: str = ""         # 복구 중 터진 오류. 보고서에 그대로 싣는다.
 
 
 from .proxy import leftover_english
-
-
-def _mark_reverted(page: pymupdf.Page) -> None:
-    """원문으로 되돌린 페이지임을 표시한다.
-
-    문구는 반드시 ASCII 로 둔다. pymupdf 기본 폰트(Helvetica)에는 한글
-    글리프가 없어서, 한글로 넣으면 **조용히 아무것도 찍히지 않는다.**
-    표시를 남겼다고 믿었는데 실제로는 없던 적이 있다.
-    """
-    r = page.rect
-    page.draw_rect(pymupdf.Rect(r.x0 + 18, r.y1 - 26, r.x0 + 250, r.y1 - 10),
-                   color=None, fill=(1, 0.96, 0.90))
-    page.insert_text((r.x0 + 22, r.y1 - 15),
-                     "[pdfko] original page kept - Korean did not fit",
-                     fontsize=6.5, color=(0.65, 0.25, 0.15))
 
 
 def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
@@ -192,122 +178,6 @@ def splice_page(target: Path, page: int, source: Path, out: Path) -> None:
     _replace(tmp, out)
 
 
-def revert_pages(trans_pdf: Path, orig_pdf: Path, pages: list[int],
-                 offset: int, out_pdf: Path,
-                 mark: bool = True) -> list[Recovery]:
-    """지정한 페이지를 원문으로 되돌린다.
-
-    pages : 번역본 기준 쪽번호(1부터)
-    offset: 번역본 1쪽 = 원본 (1+offset)쪽
-    mark  : 되돌린 페이지 여백에 작은 표시를 남긴다
-
-    pdfseparate + pdfunite 로 하면 낱장 분해·재결합 과정에서 페이지마다 폰트가
-    중복 삽입되어 파일이 수십 배로 부풀고 xref 가 깨진다. pymupdf 는 객체를
-    공유하며 붙이므로 그런 일이 없다.
-    """
-    recs: list[Recovery] = []
-    with pymupdf.open(trans_pdf) as doc, pymupdf.open(orig_pdf) as src:
-        for p in sorted(pages, reverse=True):     # 뒤에서부터 바꿔야 인덱스가 안 밀린다
-            o = p + offset
-            if not (1 <= o <= src.page_count):
-                continue
-            doc.delete_page(p - 1)
-            doc.insert_pdf(src, from_page=o - 1, to_page=o - 1, start_at=p - 1)
-            if mark:
-                _mark_reverted(doc[p - 1])
-            recs.append(Recovery(page=p, orig_page=o, reasons=[], action="reverted"))
-        tmp = _save_tmp(doc, out_pdf)
-    _replace(tmp, out_pdf)
-    return list(reversed(recs))
-
-
-def _is_severe(v: PageVerdict) -> bool:
-    return v.overlap > 0.15 or v.outside > 0.10 or v.collision > 0.10
-
-
-def _is_korean(one_page_pdf: Path, floor: float = 0.3) -> bool:
-    """재번역 결과가 실제로 한국어인가.
-
-    종료 코드만으로는 부족하다. 상류가 죽어 있어도 **babeldoc 은 0 을 돌려주고
-    영어 페이지를 내놓는다** — 실측으로 없는 포트를 줘도 mono.pdf 가 나왔다.
-    그걸 그대로 끼우면 영어 페이지를 '재번역 성공'으로 보고하게 된다.
-    """
-    from .repair import hangul_ratio
-    try:
-        with pymupdf.open(one_page_pdf) as d:
-            txt = d[0].get_text() if d.page_count else ""
-    except Exception:
-        return False
-    if len(txt.split()) < 15:
-        return False          # 글자가 거의 없다 — 판정할 수 없으니 믿지 않는다
-    return hangul_ratio(txt) >= floor
-
-
-def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
-                 offset: int, src_pdf: Path, work: Path, *,
-                 model: str, proxy_port: int,
-                 prompt_file: Path | None = None,
-                 on_step=None) -> list[Recovery]:
-    """파손된 페이지를 사다리로 되살린다. 1단계 간결 재번역 → 2단계 원문 유지.
-
-    1단계를 건너뛰면 안 된다. 원문으로 되돌리는 것은 **고치는 게 아니라
-    포기하는 것**이고, 사용자에게는 "번역이 빠졌다"로 보인다. 겹침의 원인은
-    한국어가 길어 자리가 모자란 것이므로, 짧게 다시 번역하면 들어갈 여지가
-    있다. 그 페이지 하나만 다시 돌리므로 비용도 작다.
-
-    되돌리기는 1단계가 실패한 페이지에만 적용한다.
-    """
-    recs: list[Recovery] = []
-    give_up: list[int] = []
-    notes: dict[int, str] = {}
-    for v in severe:
-        o = v.page + offset
-        if on_step:
-            on_step(v.page, "간결 재번역")
-        # 오류를 삼켜 버리면 안 된다. 예전에는 여기서 터진 예외가 그대로
-        # 되돌리기로 흘러가, 사용자에게 **"한국어가 안 맞아서 원문을 유지했다"**
-        # 는 판정으로 보고됐다. 디스크가 찼든 babeldoc 이 없든 TypeError 든
-        # 전부 같은 문구였다. 오류를 감추는 정도가 아니라 **거짓 설명으로
-        # 바꿔치기**하는 것이라, 정직한 보고를 내세우는 도구가 할 일이 아니다.
-        got, why = None, ""
-        try:
-            got = retranslate_page(v.page, o, src_pdf, work, model=model,
-                                   proxy_port=proxy_port,
-                                   prompt_file=prompt_file)
-        except Exception as e:
-            got, why = None, f"재번역 실패: {type(e).__name__}: {e}"
-        if got and _is_korean(got):
-            try:
-                splice_page(trans_pdf, v.page, got, trans_pdf)
-                with pymupdf.open(trans_pdf) as t, pymupdf.open(orig_pdf) as s:
-                    again = qa.inspect_page(s[o - 1], t[v.page - 1], v.page)
-                if not _is_severe(again):
-                    recs.append(Recovery(page=v.page, orig_page=o,
-                                         reasons=v.reasons, action="retranslated"))
-                    continue
-            except Exception as e:
-                why = f"끼워 넣기 실패: {type(e).__name__}: {e}"
-        # 예외 없이 포기하는 두 경로에도 이유를 남긴다. 앞선 수정은 `except`
-        # 안에서만 이유를 채워서, 재번역이 조용히 None 을 돌려주거나 결과가
-        # 영어로 오는 경우는 여전히 "원문 유지"로만 보고됐다. 둘 다 도구의
-        # 판단이 아니라 **실패**다.
-        if not why:
-            why = ("재번역이 결과를 내지 못했습니다 "
-                   f"(logs/repair_p{v.page}.log 확인)" if got is None else
-                   "재번역 결과가 한국어가 아닙니다 (추론 서버를 확인하세요)")
-        give_up.append(v.page)
-        notes[v.page] = why
-
-    if give_up:
-        if on_step:
-            on_step(0, f"{len(give_up)}쪽 원문 유지")
-        back = revert_pages(trans_pdf, orig_pdf, give_up, offset, trans_pdf)
-        for r in back:
-            r.note = notes.get(r.page, "")
-        recs += back
-    return recs
-
-
 def _fragment_note(log_dir: Path) -> list[str]:
     """조각 모드로 번역된 문단을 보고서에 실을 줄로 만든다.
 
@@ -342,6 +212,29 @@ def _fragment_note(log_dir: Path) -> list[str]:
     return out
 
 
+def _is_severe(v: PageVerdict) -> bool:
+    return v.overlap > 0.15 or v.outside > 0.10 or v.collision > 0.10
+
+
+def _is_korean(one_page_pdf: Path, floor: float = 0.3) -> bool:
+    """재번역 결과가 실제로 한국어인가.
+
+    종료 코드만으로는 부족하다. 상류가 죽어 있어도 **babeldoc 은 0 을 돌려주고
+    영어 페이지를 내놓는다** — 실측으로 없는 포트를 줘도 mono.pdf 가 나왔다.
+    그걸 그대로 끼우면 영어 페이지를 '재번역 성공'으로 보고하게 된다.
+    """
+    from .repair import hangul_ratio
+    try:
+        with pymupdf.open(one_page_pdf) as d:
+            txt = d[0].get_text() if d.page_count else ""
+    except Exception:
+        return False
+    if len(txt.split()) < 15:
+        return False          # 글자가 거의 없다 — 판정할 수 없으니 믿지 않는다
+    return hangul_ratio(txt) >= floor
+
+
+
 def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
                         src_pdf: Path, work: Path, *, model: str,
                         proxy_port: int,
@@ -349,16 +242,15 @@ def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
                         on_step=None) -> list[Recovery]:
     """영어가 남은 페이지를 **다시 번역해서** 되살린다.
 
-    ## 왜 따로 있어야 하나
+    ## 왜 좌표 판정으로는 못 찾나
 
-    `repair_pages` 는 `qa.scan` 의 좌표 판정만 받는다. 겹치지도 밀려나지도
-    않은 채 영어 문장만 남은 페이지는 그 판정에 걸리지 않으므로 수리 루프에
-    **아예 들어가지 않았다.** 프록시가 문단 단위로 재시도를 다 쓰고 포기하면
-    그걸로 끝이었다.
+    겹치지도 밀려나지도 않은 채 영어 문장만 남은 페이지는 `qa.scan` 에
+    걸리지 않는다. 자리는 멀쩡하기 때문이다. 프록시가 문단 단위로 재시도를
+    다 쓰고 포기하면 그걸로 끝이었다. 그래서 따로 훑는다.
 
-    ## 왜 되돌리지 않나
+    ## 왜 원문으로 되돌리지 않나
 
-    `repair_pages` 의 2단계는 '원문 유지'다. 여기서는 쓰면 안 된다. 90%가
+    영어가 남은 쪽을 통째로 원문으로 바꾸면 안 된다. 90%가
     한국어인 쪽을 통째로 영어로 바꾸는 것은 고치는 게 아니라 **더 나쁘게
     만드는 것**이다. 재번역이 실패하면 있는 그대로 두고 보고서에 적는다.
 
@@ -384,20 +276,22 @@ def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
             try:
                 # 갈아 끼우기 전에 확인한다. 영어가 그대로면 끼울 이유가 없고,
                 # 레이아웃이 깨졌다면 오히려 나빠진다.
-                with pymupdf.open(got) as g:
+                # **끼우기 전에** 다 확인한다. 예전에는 먼저 끼우고 나서
+                # 봤고, 레이아웃이 깨졌으면 "되돌림"이라 적었다 — 실제로는
+                # 되돌리지 않았다. 보고서만 거짓말을 하고 있었다.
+                with pymupdf.open(got) as g, pymupdf.open(orig_pdf) as s:
                     still = leftover_english(g[0].get_text())
-                if not still:
-                    splice_page(trans_pdf, page, got, trans_pdf)
-                    with pymupdf.open(trans_pdf) as t, pymupdf.open(orig_pdf) as s:
-                        again = qa.inspect_page(s[o - 1], t[page - 1], page)
-                    if not _is_severe(again):
-                        recs.append(Recovery(page=page, orig_page=o,
-                                             reasons=[f"영어 잔류: {run[:40]}"],
-                                             action="retranslated"))
-                        continue
-                    why = "재번역했으나 레이아웃이 깨져 되돌림"
-                else:
+                    after = qa.inspect_page(s[o - 1], g[0], page)
+                if still:
                     why = "재번역해도 영어가 남음"
+                elif _is_severe(after):
+                    why = "재번역하면 레이아웃이 깨져 그대로 둠"
+                else:
+                    splice_page(trans_pdf, page, got, trans_pdf)
+                    recs.append(Recovery(page=page, orig_page=o,
+                                         reasons=[f"영어 잔류: {run[:40]}"],
+                                         action="retranslated"))
+                    continue
             except Exception as e:
                 why = f"끼워 넣기 실패: {type(e).__name__}: {e}"
         recs.append(Recovery(page=page, orig_page=o,
@@ -484,31 +378,26 @@ def write_report(path: Path, verdicts: list[PageVerdict],
         "",
         f"- 전체 {len(verdicts)}쪽",
         f"- 파손 감지 {len(broken)}쪽",
-        f"- 원문으로 되돌림 {sum(1 for r in recoveries if r.action == 'reverted')}쪽",
         f"- 영어가 남은 쪽 {len(left)}쪽",
         "",
     ]
     if broken:
-        lines += ["## 파손이 감지된 페이지", "",
-                  "| 번역본 쪽 | 원본 쪽 | 사유 | 처리 |",
-                  "|---|---|---|---|"]
-        by_page = {r.page: r for r in recoveries}
+        lines += ["## 자리가 어긋난 페이지", "",
+                  "아래 쪽은 글자 위치가 원본과 어긋났습니다. **손대지 않았습니다** "
+                  "— 자리가 어긋났다는 이유로 다시 번역하거나 영어 원문을 도로 "
+                  "붙이면, 잘된 번역까지 잃기 때문입니다. 한국어가 영어보다 길어 "
+                  "상자를 조금 넘는 것은 흔한 일입니다. 눈으로 보고 판단하세요.", "",
+                  "| 번역본 쪽 | 원본 쪽 | 무엇이 |",
+                  "|---|---|---|"]
         for v in broken:
-            r = by_page.get(v.page)
-            a = {"reverted": "원문 유지", "retranslated": "재번역"}.get(
-                r.action if r else "", "복구가 실행되지 않음")
-            # 복구가 터졌으면 그 오류를 그대로 싣는다. "원문 유지"라고만
-            # 적으면 사용자는 도구가 판단해서 그렇게 한 줄 안다.
-            if r and r.note:
-                a = f"복구 실패 — {r.note}"
             lines.append(f"| {v.page} | {v.page + offset} | "
-                         f"{', '.join(v.reasons)} | {a} |")
+                         f"{', '.join(v.reasons)} |")
         lines.append("")
     failed = [r for r in recoveries if r.note]
     if failed:
-        lines += ["## 복구 중 오류가 난 페이지", "",
-                  "아래 페이지는 도구가 판단해서 원문을 남긴 것이 **아니라**, "
-                  "복구 과정에서 오류가 나 되돌린 것입니다.", ""]
+        lines += ["## 다시 번역해 봤지만 안 된 페이지", "",
+                  "영어가 남아 있어 다시 물어봤는데 나아지지 않은 쪽입니다. "
+                  "번역본은 그대로 두었습니다.", ""]
         lines += [f"- {r.page}쪽 — {r.note}" for r in failed]
         lines.append("")
 
@@ -523,7 +412,9 @@ def write_report(path: Path, verdicts: list[PageVerdict],
         "- **줄충돌** — 서로 다른 줄이 같은 높이에 끼어들었다.",
         "- **그림혼재** — 그림 속 라벨 일부만 번역되어 언어가 섞였다.",
         "",
-        "'원문 유지'로 표시된 페이지는 번역하면 읽을 수 없게 되어 영어 원문을",
-        "그대로 두었다. 해당 쪽 하단에 작은 표시가 있다.",
+        "",
+        "자리가 어긋났다는 이유로는 손대지 않는다. 한국어가 영어보다 길어",
+        "상자를 조금 넘는 일은 흔하고, 그때마다 다시 번역하거나 영어 원문을",
+        "도로 붙이면 잘된 번역까지 잃는다. 눈으로 보고 판단하면 된다.",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")

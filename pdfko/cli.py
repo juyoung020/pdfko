@@ -3,7 +3,7 @@
     pdfko book.pdf
 
 한 줄이면 끝난다. 사전 점검 → 서버 기동 → 구간 번역 → 병합 →
-파손 검사 → 자동 복구 → 보고서까지 자동으로 진행된다.
+파손 검사 → 영어 잔존 재번역 → 보고서까지 자동으로 진행된다.
 중간에 끊겨도 같은 명령을 다시 실행하면 이어서 간다.
 """
 
@@ -288,9 +288,9 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--gguf", type=Path, help="등록할 GGUF 파일 (최초 1회)")
     p.add_argument("--prompt", type=Path, help="추가 번역 지시문 파일")
     p.add_argument("--no-recover", action="store_true",
-                   help="파손 페이지를 원문으로 되돌리지 않습니다")
+                   help="영어가 남은 쪽을 다시 번역하지 않습니다")
     p.add_argument("--recheck", action="store_true",
-                   help="번역은 건너뛰고 검사·복구만 다시 합니다")
+                   help="번역은 건너뛰고 검사·보고서만 다시 만듭니다")
     p.add_argument("--fresh", action="store_true",
                    help="캐시를 비우고 처음부터 (검증 규칙을 바꿨을 때)")
     a = p.parse_args(argv)
@@ -580,43 +580,17 @@ def _main(argv: list[str] | None = None) -> int:
             if mx:
                 v.reasons.append(f"그림혼재{mx}")
     broken = [v for v in verdicts if v.broken]
-    severe = [v for v in broken
-              if v.overlap > 0.15 or v.outside > 0.10 or v.collision > 0.10]
-    info(f"파손 {len(broken)}쪽 (심각 {len(severe)}쪽)")
+    info(f"파손 {len(broken)}쪽")
 
+    # 좌표 판정으로는 **손대지 않는다.** 복구는 번역이 잘못됐을 때 쓰는
+    # 장치인데, 상자를 넘었다는 이유로 부르면 잘된 번역을 되돌린다. 한국어가
+    # 영어보다 길어 살짝 넘치는 것은 흔한 일이다. 검사 결과는 보고서에
+    # 남겨 사람이 보게 하고, 고치는 것은 아래 한 가지 경우뿐이다.
     recs = []
-    if severe and not a.no_recover:
-        step("자동 복구")
-        # 복구가 터져도 번역본은 이미 out 에 있다. 여기서 예외를 놓치면
-        # 몇 시간 번역한 결과를 마지막 한 걸음에서 잃는다.
-        try:
-            if a.recheck:
-                # --recheck 는 서버를 띄우지 않으므로 재번역을 못 한다.
-                recs = recover.revert_pages(out, src, [v.page for v in severe],
-                                            offset, out)
-            else:
-                recs = recover.repair_pages(
-                    out, src, severe, offset, src, work,
-                    model=a.model, proxy_port=srv.pp,
-                    prompt_file=a.prompt,
-                    on_step=lambda p, what: info(
-                        f"  {p}쪽 {what}" if p else f"  {what}"))
-            again = sum(1 for r in recs if r.action == "retranslated")
-            back = sum(1 for r in recs if r.action == "reverted")
-            info(f"재번역으로 살린 {again}쪽, 원문 유지 {back}쪽"
-                 + (" (되돌린 쪽 하단에 표시가 남습니다)" if back else ""))
-        except Exception as e:
-            warn(f"자동 복구 실패({type(e).__name__}: {e}) — "
-                 f"번역본 {out.name} 은 그대로 쓸 수 있습니다")
-            # 보고서에도 남긴다. 여기서 버리면 모든 파손 페이지가
-            # "복구가 실행되지 않음" 으로만 찍혀 이유를 알 수 없다.
-            recs = [recover.Recovery(page=v.page, orig_page=v.page + offset,
-                                     reasons=v.reasons, action="",
-                                     note=f"복구 중단: {type(e).__name__}: {e}")
-                    for v in severe]
 
-    # 영어가 남은 쪽은 좌표 판정에 안 걸린다. 겹치지도 밀려나지도 않은 채
-    # 문장만 영어로 남아 있기 때문이다. 따로 훑어 다시 번역한다.
+    # 영어가 그대로 남은 쪽. 이건 번역이 실제로 안 된 것이라 다시 물어볼
+    # 이유가 분명하다. 겹치지도 밀려나지도 않은 채 문장만 영어라, 좌표
+    # 판정에는 걸리지 않는다.
     if not a.no_recover and not a.recheck:
         left = recover.leftover_pages(out)
         if left:
@@ -647,13 +621,8 @@ def _main(argv: list[str] | None = None) -> int:
     info(f"결과   {out}")
     info(f"보고서 {rep}")
     if broken:
-        # 되돌린 페이지를 '복구'로 세면 안 된다. 전부 영어로 남겨 놓고
-        # "12쪽 중 12쪽 복구"라고 말하게 된다.
-        fixed_n = sum(1 for r in recs if r.action == "retranslated")
-        back_n = sum(1 for r in recs if r.action == "reverted")
-        info(f"파손 {len(broken)}쪽 — 재번역으로 살림 {fixed_n}쪽, "
-             f"원문 유지 {back_n}쪽, 그대로 둠 {len(broken) - fixed_n - back_n}쪽 "
-             f"(보고서 참고)")
+        info(f"레이아웃 검사에서 {len(broken)}쪽이 걸렸습니다 — 손대지 않았습니다. "
+             f"보고서에서 무엇이 걸렸는지 볼 수 있습니다")
     return 0
 
 

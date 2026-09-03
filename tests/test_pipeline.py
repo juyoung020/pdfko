@@ -113,7 +113,7 @@ def test_both_paths_do_the_same_steps():
                  "glyphmap.build_table",
                  "model_ready",
                  "plan_chunks", "translate_chunk", "merge", "qa.scan",
-                 "coverage", "mixed_language_figures", "repair_pages",
+                 "coverage", "mixed_language_figures", "repair_untranslated",
                  "write_report", "cleanup_work"):
         assert step in cli_src, f"cli 에 {step} 없음"
         assert step in web_src, f"web 에 {step} 없음"

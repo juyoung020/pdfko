@@ -207,28 +207,6 @@ def test_clipscan_preserves_visible_text(tmp_path):
     after = pymupdf.open(dst)[0].get_text()
     assert after == before          # 보이는 텍스트는 그대로
     assert isinstance(lost, dict)   # 손실 기록을 돌려준다
-
-
-# ── 이번 라운드의 차단 결함들 ─────────────────────────────────────────────
-def test_revert_pages_can_save_over_itself(tmp_path):
-    """자동 복구는 번역본을 제자리에서 고친다. 예전엔 그때마다 100% 죽었다."""
-    import pymupdf
-    from pdfko import recover
-    orig = tmp_path / "o.pdf"
-    d = pymupdf.open()
-    for t in ("ONE", "TWO", "THREE"):
-        d.new_page().insert_text((72, 200), t, fontsize=20)
-    d.save(orig); d.close()
-    trans = tmp_path / "t.pdf"
-    shutil.copy(orig, trans)
-    recs = recover.revert_pages(trans, orig, [2], 0, trans)   # 같은 경로
-    assert [r.action for r in recs] == ["reverted"]
-    with pymupdf.open(trans) as t:
-        assert t.page_count == 3
-        assert "TWO" in t[1].get_text()
-    assert not list(tmp_path.glob("*.tmp"))
-
-
 def test_clipscan_counts_characters_not_operators():
     """`Tj` 하나에 든 글자를 세야 한다. 연산자를 세면 임계값이 무의미해진다."""
     from pdfko.clipscan import _str_chars
@@ -465,97 +443,6 @@ def test_merge_refuses_a_truncated_chunk(tmp_path):
     with pytest.raises(RuntimeError) as ei:
         runner.merge(chunks, tmp_path / "bad.pdf")
     assert "1-3" in str(ei.value)                              # 어느 구간인지 말한다
-
-
-def test_fragment_mode_rejects_runaway_length():
-    """조각 모드가 길이를 안 보면 원문의 9배짜리 문단이 그대로 나간다.
-
-    사전 조각 경로는 그것을 캐시에까지 넣어, 다시 돌려도 같은 결과가 나왔다.
-    같은 텍스트를 통짜 경로에 넣으면 `width 9.41x` 로 거부된다.
-    """
-    from pdfko import proxy
-    src = " ".join(f"col {{v{i}}} x" for i in range(1, 17))
-    runs, phs = proxy.split_runs(src)
-    long_ko = "이것은 아주 길게 늘어난 한국어 번역문이며 원문보다 훨씬 깁니다"
-    rebuilt = "".join((long_ko if proxy.is_translatable(r) else r)
-                      + (phs[k] if k < len(phs) else "")
-                      for k, r in enumerate(runs))
-    sw = proxy.est_width(src)
-    assert sw >= 10
-    assert proxy.est_width(rebuilt) / sw > proxy.WIDTH_MAX     # 거부 대상이다
-
-
-def test_recovery_failures_carry_a_reason(tmp_path, monkeypatch):
-    """복구가 실패한 것을 "원문 유지"라는 **판단**으로 보고하면 안 된다.
-
-    예외를 던지는 경로만 이유를 남기고 있었다. 조용히 None 을 돌려주거나
-    결과가 영어로 오는 두 경로는 여전히 도구가 판단해서 그렇게 한 것처럼
-    보고됐다. 정직한 보고가 이 도구의 존재 이유다.
-    """
-    import pymupdf
-    from pdfko import qa, recover
-
-    orig = tmp_path / "o.pdf"
-    d = pymupdf.open()
-    for t in ("ONE", "TWO", "THREE"):
-        d.new_page().insert_text((72, 200), t, fontsize=20)
-    d.save(orig); d.close()
-
-    def report_for(fake):
-        trans = tmp_path / f"t{id(fake)}.pdf"
-        shutil.copy(orig, trans)
-        work = tmp_path / f"w{id(fake)}"
-        (work / "logs").mkdir(parents=True)
-        monkeypatch.setattr(recover, "retranslate_page", fake)
-        v = qa.PageVerdict(page=2, words=200)
-        v.overlap, v.reasons = 0.99, ["겹침99%"]
-        recs = recover.repair_pages(trans, orig, [v], 0, orig, work,
-                                    model="m", proxy_port=9)
-        rep = work / "r.md"
-        recover.write_report(rep, [v], recs, 0)
-        return rep.read_text(encoding="utf-8")
-
-    # (a) 예외 없이 None
-    txt = report_for(lambda *a, **k: None)
-    assert "복구 실패" in txt and "원문 유지 |" not in txt
-
-    # (b) 영어 페이지를 돌려줌
-    def english(*a, **k):
-        f = tmp_path / "eng.pdf"
-        d = pymupdf.open(); p = d.new_page(); y = 60
-        for _ in range(20):
-            p.insert_text((50, y), "This page is entirely English text", fontsize=9)
-            y += 18
-        d.save(f); d.close()
-        return f
-    txt = report_for(english)
-    assert "한국어가 아닙니다" in txt
-
-
-def test_marker_does_not_retrigger_reversion(tmp_path):
-    """되돌린 표시를 검사기가 본문으로 세면 `--recheck` 마다 또 되돌린다.
-
-    표시는 9낱말인데 본문 상자 밖이라 '영역이탈' 로 잡힌다. 낱말이 적은
-    페이지에서는 31%를 차지해 계속 심각 판정을 받았다.
-    """
-    import pymupdf
-    from pdfko import qa, recover
-    src = tmp_path / "s.pdf"
-    d = pymupdf.open(); p = d.new_page(); y = 80
-    for i in range(0, 20, 8):
-        p.insert_text((60, y), " ".join(f"word{j}" for j in range(i, i + 8)),
-                      fontsize=10)
-        y += 16
-    d.save(src); d.close()
-
-    marked = tmp_path / "m.pdf"
-    d = pymupdf.open(src); recover._mark_reverted(d[0]); d.save(marked); d.close()
-
-    with pymupdf.open(src) as o, pymupdf.open(marked) as t:
-        v = qa.inspect_page(o[0], t[0], 1)
-    assert not v.broken, v.reasons          # 표시 때문에 다시 파손이 되면 안 된다
-
-
 def test_truncated_json_is_recovered_not_discarded():
     """닫는 괄호 하나 때문에 멀쩡한 번역을 버리면 안 된다.
 
@@ -1823,3 +1710,81 @@ def test_a_sentence_split_by_inline_math_is_not_a_column():
 
     assert "Low High" in cols
     assert not any("regular predictors" in k for k in cols), cols
+
+
+# ── 복구는 영어가 남았을 때만 한다 ────────────────────────────────────────
+def test_recovery_only_runs_for_leftover_english():
+    """레이아웃이 깨졌다고 다시 번역하거나 원문으로 되돌리지 않는다.
+
+    복구는 번역이 잘못됐을 때 쓰는 장치인데, 좌표 판정으로 부르면 **잘된
+    번역을 되돌린다.** 한국어가 영어보다 길어 상자를 살짝 넘는 것은 흔한
+    일이고, 그때마다 재번역하거나 영어 원문을 도로 붙이면 손해다.
+
+    남기는 것은 하나뿐이다 — 영어가 그대로 남은 쪽. 그건 번역이 실제로
+    안 된 것이라 다시 물어볼 이유가 분명하다.
+
+    레이아웃 검사 자체는 남긴다. 23쪽에 0.0초라 공짜이고, 보고서에 무엇이
+    어떻게 놓였는지 적어 두는 것은 여전히 쓸모가 있다 — 다만 **읽을거리**지
+    행동의 근거가 아니다.
+    """
+    import inspect
+
+    from pdfko import cli, recover, web
+
+    for src in (inspect.getsource(cli._main), inspect.getsource(web._run)):
+        assert "repair_untranslated" in src        # 영어 잔존은 고친다
+        assert "qa.scan" in src                    # 검사와 보고서는 남는다
+        assert "write_report" in src
+        assert "repair_pages" not in src           # 레이아웃으로는 손대지 않는다
+        assert "revert_pages" not in src
+
+    # 되돌리는 기능 자체가 없어야 한다 — 남겨 두면 언젠가 다시 불린다
+    assert not hasattr(recover, "repair_pages")
+    assert not hasattr(recover, "revert_pages")
+
+
+def test_a_retranslation_that_would_wreck_the_page_is_not_spliced(tmp_path,
+                                                                  monkeypatch):
+    """재번역이 자리를 망가뜨리면 끼우지 않는다 — **끼우기 전에** 본다.
+
+    예전에는 먼저 끼우고 나서 봤다. 깨졌으면 보고서에 "되돌림"이라 적었는데,
+    실제로 되돌리는 코드는 없었다. 망가진 쪽을 그대로 둔 채 보고서만
+    거짓말을 하고 있었다.
+    """
+    import pymupdf
+    from pdfko import recover
+
+    # 원본: 쪽 가운데 좁은 띠에만 영어가 있다
+    orig = tmp_path / "o.pdf"
+    d = pymupdf.open(); pg = d.new_page(width=400, height=600)
+    for k in range(4):
+        pg.insert_text((60, 300 + k * 12),
+                       "with general function approximation there is not",
+                       fontsize=9)
+    d.save(orig); d.close()
+
+    # 번역본: 같은 자리에 한국어 + 영어 한 줄이 남았다
+    trans = tmp_path / "t.pdf"
+    d = pymupdf.open(); pg = d.new_page(width=400, height=600)
+    for k in range(4):
+        pg.insert_text((60, 300 + k * 12), "정책은 상태를 행동으로 사상한다",
+                       fontsize=9, fontname="korea")
+    pg.insert_text((60, 360), "with general function approximation there is "
+                              "not such a clear notion here", fontsize=9)
+    d.save(trans); d.close()
+    before = trans.read_bytes()
+
+    # 재번역 결과: 한국어지만 원본 본문 밖으로 한참 흩어졌다
+    wrecked = tmp_path / "w.pdf"
+    d = pymupdf.open(); pg = d.new_page(width=400, height=600)
+    for k in range(20):
+        pg.insert_text((20, 30 + k * 26), "정책은 상태를 행동으로 사상하는 함수",
+                       fontsize=9, fontname="korea")
+    d.save(wrecked); d.close()
+
+    monkeypatch.setattr(recover, "retranslate_page", lambda *a, **k: wrecked)
+    recs = recover.repair_untranslated(trans, orig, 0, orig, tmp_path,
+                                       model="m", proxy_port=1)
+    assert [r.action for r in recs] == ["kept"], recs
+    assert "레이아웃" in recs[0].note, recs[0].note
+    assert trans.read_bytes() == before, "망가질 쪽을 이미 끼워 넣었다"
