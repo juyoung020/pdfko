@@ -24,6 +24,8 @@ _MULTISPACE = re.compile(r"\s{3,}")
 # est_width 가 공백에 매기는 폭. proxy 와 같은 값을 써야 채운 칸이
 # 원본과 같은 자리에 선다.
 _SPACE_EM = 0.33
+# 열로 보려면 줄 높이의 몇 배나 벌어져야 하는가. 실측한 골짜기.
+_COLUMN_GAP = 2.0
 
 
 def _c(s: str, code: str) -> str:
@@ -205,10 +207,25 @@ def build_columns(src: Path, out: Path) -> int:
                     continue
                 parts.sort()
                 gaps = [b[0] - a[1] for a, b in zip(parts, parts[1:])]
-                # 줄 하나보다 넓게 벌어졌으면 낱말 사이가 아니라 열 사이다.
-                # 글꼴 크기에 매이지 않는 기준이라 문서가 달라져도 흔들리지
-                # 않는다.
-                if any(g < parts[0][2] for g in gaps):
+                # 줄 높이의 **두 배**보다 넓게 벌어져야 열로 본다. 글꼴
+                # 크기에 매이지 않는 기준이라 문서가 달라져도 흔들리지 않는다.
+                #
+                # 문턱은 실측한 골짜기다. 줄 안에 수식이 끼어 갈라진 문장이
+                # 아래쪽에, 진짜 열이 위쪽에 몰려 있다(548쪽 교재·23쪽 발표
+                # 자료):
+                #
+                #    0.8배  '…copyright holder.' | 'This work is licensed'
+                #    1.7배  'regular predictors of' | 'over this interval'
+                #   ─────────────────────────────────────────────────────
+                #    2.4배  '2023-03-15' | '10'          쪽 바닥글
+                #    2.8배  'Yes' | 'No'                 판단 도식
+                #    3.9배  'Qt(a)' | 'estimate at time' 기호표
+                #   13.5배  'Low' | 'High'               자율성 눈금
+                #   21.6배  'Preface …' | 'xiii'         목차
+                #
+                # 낮게 잡으면 교재의 문장이 두 조각으로 번역된다.
+                if any(g < a[2] * _COLUMN_GAP
+                       for g, a in zip(gaps, parts)):
                     continue
                 key = " ".join(p[3] for p in parts)
                 if key in cols:

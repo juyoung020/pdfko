@@ -1777,3 +1777,49 @@ def test_the_chunk_stamp_covers_proxy_rules_too():
     finally:
         proxy._rules_fingerprint = real
     assert runner.settings_stamp(cmd) == before      # 되돌리면 같아진다
+
+
+def test_a_sentence_split_by_inline_math_is_not_a_column():
+    """줄 안에 수식이 끼어 갈라진 문장은 열이 아니다.
+
+    떨어진 조각을 모두 열로 보면 교재가 망가진다. 실측(548쪽 교재):
+
+        1.7배  'regular predictors of' | 'over this interval'   ← 문장이다
+        0.8배  '…copyright holder.'    | 'This work is licensed' ← 문장이다
+
+    반면 진짜 열은 훨씬 넓게 벌어진다:
+
+        2.4배  '2023-03-15' | '10'                 (쪽 바닥글)
+        2.8배  'Yes'        | 'No'                 (판단 도식)
+        3.9배  'Qt(a)'      | 'estimate at time t' (기호표)
+       13.5배  'Low'        | 'High'               (자율성 눈금)
+       21.6배  'Preface …'  | 'xiii'               (목차)
+
+    골짜기는 1.7배와 2.4배 사이다. 줄 높이의 두 배를 문턱으로 둔다.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import pymupdf
+    from pdfko.cli import build_columns
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "a.pdf"
+        doc = pymupdf.open()
+        pg = doc.new_page(width=600, height=300)
+        # 'regular predictors of' 는 x=40..129 에 그려진다. 뒤 조각을
+        # x=145 에 두면 간격 16pt — 줄 높이의 1.6배로, 실측한 1.7배와 같다.
+        pg.insert_text((40, 80), "regular predictors of", fontsize=10)
+        pg.insert_text((145, 80), "over this interval", fontsize=10)
+        # 'Low' 는 x=40..58. 뒤를 x=120 에 두면 62pt — 6.2배로 열이다.
+        pg.insert_text((40, 140), "Low", fontsize=10)
+        pg.insert_text((120, 140), "High", fontsize=10)
+        doc.save(src); doc.close()
+
+        out = Path(d) / "columns.json"
+        build_columns(src, out)
+        cols = json.loads(out.read_text(encoding="utf-8"))
+
+    assert "Low High" in cols
+    assert not any("regular predictors" in k for k in cols), cols
