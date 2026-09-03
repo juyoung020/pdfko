@@ -976,6 +976,10 @@ async def chat(request: Request):
     #     배치 10개 중 1개가 틀렸다고 10개를 재번역하면 GPU가 재작업만 한다.
     pending = [it for it in items if str(it.get("id")) not in results]
     hint, why, last = None, "", ""
+    # 직전 시도의 실패 사유. 같은 사유로 또 실패하면 더 묻지 않는다 —
+    # 바뀐 게 없는데 또 묻는 것은 재시도가 아니라 반복이다.
+    prev_why: dict[str, str] = {}
+    stuck: list[dict] = []
     for attempt, temp in enumerate(temps, 1):
         if not pending:
             break
@@ -1006,8 +1010,16 @@ async def chat(request: Request):
                 if cand.strip() != (it.get("input") or "").strip():
                     cache_put(item_key(it.get("input", "")),
                               it.get("input", ""), cand, attempt)
+            elif prev_why.get(iid) == str(why):
+                # 실측: 1차 실패 80건 중 2차에서 19건(23%)이 살아났지만,
+                # 2차 실패 61건 중 3차에서 살아난 것은 4건(6%)뿐이었다.
+                # 나머지 57번은 같은 답을 받으려고 GPU 를 한 번 더 부른 것이다.
+                # 여기서 멈춰도 아래 (c) 조각 구제는 그대로 받는다.
+                stuck.append(it)
+                prev_why[iid] = str(why)
             else:
                 still.append((it, why))
+                prev_why[iid] = str(why)
         if not still:
             pending = []      # 비우지 않으면 아래 조각 구제가 성공 항목까지 덮어쓴다
             break
@@ -1017,6 +1029,10 @@ async def chat(request: Request):
                                     "why": why, "raw": raw[:400]})
         hint = repair_hint(still, parsed)
         pending = [it for it, _ in still]
+
+    # 사다리에서 멈춘 것도 조각 구제는 받아야 한다. 여기서 빠뜨리면
+    # 영어 원문으로 직행한다.
+    pending = pending + stuck
 
     # (c) 통짜 번역이 3번 다 실패한 항목은 **영어로 버리기 전에 조각 모드**를 태운다.
     #     자리표시자 사이의 본문만 번역하고 자리표시자는 우리가 원위치에 끼우므로

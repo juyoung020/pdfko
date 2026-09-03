@@ -316,3 +316,39 @@ def test_the_hint_addresses_the_reason_the_checker_gave(rig, src, bad, must_ment
     hint_area = up.seen[1][-700:]
     assert must_mention in hint_area, \
         f"{must_mention!r} 를 짚지 않았다:\n{hint_area}"
+
+
+def test_the_ladder_stops_when_nothing_changes(rig):
+    """같은 사유로 또 실패하면 한 번 더 묻지 않는다.
+
+    실측: 1차 실패 80건 중 2차에서 19건(23%)이 살아났지만, 2차 실패 61건
+    중 3차에서 살아난 것은 4건(6%)뿐이었다. 나머지 57번은 **같은 답을
+    받으려고 GPU 를 한 번 더 부른 것**이다.
+
+    L02 머리글이 그 전형이었다 — 힌트가 엉뚱한 곳을 짚는 바람에 1·2·3차가
+    글자 하나 다르지 않게 실패했다. 바뀐 게 없는데 또 묻는 것은 재시도가
+    아니라 반복이다. 진전이 있는 항목은 그대로 세 번을 다 쓴다.
+    """
+    same = json.dumps([{"id": 0, "output": "a policy maps states to actions"}],
+                      ensure_ascii=False)
+    up, cli = rig(same, same, same)
+    ask(cli, "A policy maps states to actions in every state of the world.")
+    whole = [s for s in up.seen if '"layout_label": "fragment"' not in s]
+    assert len(whole) == 2, f"같은 실패에 통짜를 {len(whole)}번 물었다"
+
+
+def test_an_item_making_progress_still_gets_its_third_try(rig):
+    """사유가 달라지면 진전이 있는 것이므로 세 번째도 준다."""
+    drop = json.dumps([{"id": 0, "output": "스텝 크기가 조절한다."}],
+                      ensure_ascii=False)          # 자리표시자 유실
+    wide = json.dumps([{"id": 0, "output":
+                        "스텝 크기 {v1}가 시간에 따라 {v2}의 변화 속도를 "
+                        "매우 자세히 조절하는 역할을 담당하고 있다."}],
+                      ensure_ascii=False)          # 이번엔 폭 초과
+    ok = json.dumps([{"id": 0, "output": "스텝 크기 {v1}가 {v2} 속도를 정한다."}],
+                    ensure_ascii=False)
+    up, cli = rig(drop, wide, ok)
+    got = ask(cli, "The step size {v1} controls how fast {v2} changes over time.")
+    assert got["0"] == "스텝 크기 {v1}가 {v2} 속도를 정한다.", got
+    whole = [s for s in up.seen if '"layout_label": "fragment"' not in s]
+    assert len(whole) == 3, len(whole)
