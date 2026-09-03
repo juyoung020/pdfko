@@ -215,7 +215,11 @@ def mixed_language_figures(trans: pymupdf.Page) -> int:
             en = sum(c.isalpha() and c.isascii() for c in t)
             if ko >= 2 and en == 0:
                 pure_ko += 1
-            elif en >= 3 and ko == 0:
+            elif en >= 3 and ko == 0 and any(c.islower() for c in t):
+                # 소문자가 있어야 **번역되지 않고 남은 낱말**이다. 대문자만인
+                # 것은 약어라 그대로 두는 것이 맞다 — `LLM`, `API`, `MDP`.
+                # 실측(AI Agent 1주차 7쪽): `['LLM', '프롬프트']` 가 그림혼재로
+                # 잡혔는데, LLM 은 번역할 것이 아니다.
                 pure_en += 1
         if pure_ko and pure_en:
             mixed += 1

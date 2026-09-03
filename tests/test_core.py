@@ -1319,3 +1319,36 @@ def test_a_normal_sentence_is_left_alone():
     from pdfko.proxy import restore_gaps
     assert restore_gaps("A policy maps states to actions.", _COLS) is None
     assert restore_gaps("wrong decision wrong tool infinite loop", {}) is None
+
+
+def _label_block(*lines):
+    """한 블록 안에 여러 줄이 든 쪽. 두 번 insert_text 하면 블록이 갈린다."""
+    import pymupdf
+    d = pymupdf.open()
+    p = d.new_page(width=400, height=200)
+    p.insert_textbox(pymupdf.Rect(20, 20, 380, 180), "\n".join(lines),
+                     fontsize=11, fontname="korea")
+    return d, p
+
+
+def test_an_acronym_beside_korean_is_not_mixed_language():
+    """`LLM` 옆에 한국어가 있다고 '번역이 덜 됐다'고 하면 안 된다.
+
+    실측(AI Agent 1주차 7쪽): 라벨 묶음 `['LLM', '프롬프트']` 가 그림혼재로
+    잡혔다. `LLM` 은 약어라 그대로 두는 것이 맞다.
+
+    구분 신호는 **소문자**다 — 번역되지 않고 남은 영어 낱말에는 소문자가
+    있고(`Yes`, `wrong tool`), 약어에는 없다(`LLM`, `API`, `MDP`).
+    """
+    from pdfko import qa
+    d, p = _label_block("LLM", "프롬프트")
+    assert qa.mixed_language_figures(p) == 0, "약어를 미번역으로 셌다"
+    d.close()
+
+
+def test_a_real_untranslated_word_beside_korean_is_still_caught():
+    """반대로 소문자가 든 진짜 영어 낱말은 그대로 잡는다."""
+    from pdfko import qa
+    d, p = _label_block("Yes", "최종 추천")
+    assert qa.mixed_language_figures(p) == 1, "미번역 낱말을 놓쳤다"
+    d.close()
