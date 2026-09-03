@@ -34,6 +34,9 @@ class Recovery:
     note: str = ""         # 복구 중 터진 오류. 보고서에 그대로 싣는다.
 
 
+from .proxy import leftover_english
+
+
 def _mark_reverted(page: pymupdf.Page) -> None:
     """원문으로 되돌린 페이지임을 표시한다.
 
@@ -373,7 +376,7 @@ def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
                 # 갈아 끼우기 전에 확인한다. 영어가 그대로면 끼울 이유가 없고,
                 # 레이아웃이 깨졌다면 오히려 나빠진다.
                 with pymupdf.open(got) as g:
-                    still = _leftover_english(g[0].get_text())
+                    still = leftover_english(g[0].get_text())
                 if not still:
                     splice_page(trans_pdf, page, got, trans_pdf)
                     with pymupdf.open(trans_pdf) as t, pymupdf.open(orig_pdf) as s:
@@ -395,10 +398,6 @@ def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
     return recs
 
 
-def _leftover_english(text: str) -> str | None:
-    from .proxy import leftover_english
-    return leftover_english(text)
-
 
 def leftover_pages(out_pdf: Path) -> list[tuple[int, str]]:
     """번역이 됐는데 영어 문장이 통째로 남은 페이지. [(쪽, 남은 문장)]
@@ -412,7 +411,7 @@ def leftover_pages(out_pdf: Path) -> list[tuple[int, str]]:
     try:
         with pymupdf.open(out_pdf) as d:
             for i in range(d.page_count):
-                run = _leftover_english(_body_text(d[i]))
+                run = leftover_english(_body_text(d[i]))
                 if run:
                     rows.append((i + 1, run))
     except Exception:

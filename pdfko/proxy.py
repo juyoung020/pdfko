@@ -633,10 +633,11 @@ def repair_hint(failed: list[tuple[dict, str]], out: list | None) -> str:
         iid = str(it.get("id"))
         tgt = item_output(by_id.get(iid))
         src = it.get("input", "")
-        if est_width(src) >= 10:
-            r = est_width(tgt) / est_width(src)
-            if r > WIDTH_MAX:
-                wide.append(f"id {iid}: {r:.1f}x too long")
+        # 판정은 `too_wide` 가 한다. 여기서 다시 재면 게이트가 어긋나
+        # 힌트가 판정과 다른 말을 하게 된다 — 예전에 `has_prose` 없이
+        # 재던 탓에 URL 항목까지 "너무 길다"로 셀 뻔했다.
+        if too_wide(src, tgt):
+            wide.append(f"id {iid}: {est_width(tgt) / est_width(src):.1f}x too long")
     if "width" in kinds:
         return (
             "Your translation is far longer than the source.\n"
