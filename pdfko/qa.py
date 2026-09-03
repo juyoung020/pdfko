@@ -57,6 +57,14 @@ OVERLAP_MAX = 0.02      # 단어 2% 이상이 겹치면 파손
 OUTSIDE_MAX = 0.03      # 3% 이상이 본문 영역 밖이면 파손
 COLLISION_MAX = 0.04    # 줄 충돌 4% 이상이면 파손
 MIN_WORDS = 15          # 이보다 적으면 판정하지 않는다 (그림·빈 페이지)
+# 비율만 보면 **성긴 쪽이 과민해진다.** 이 지표는 낱말이 수백 개인 교재
+# 쪽을 상정하고 만들었다. 거기서 3% 는 의미가 있지만 24낱말짜리 슬라이드에서는
+# 한 낱말이 4% 다. 실측(L03 발표자료):
+#     21쪽  24낱말 중 2개가 밖 → 8%  → '파손' → 19초짜리 재번역
+#      5쪽  43낱말 중 3개가 밖 → 7%  → '파손'
+# 기준 상자가 원본 낱말들의 바운딩 박스라 여유가 0인 것도 겹친다 — 원본
+# 이탈률은 정의상 0.0% 이고, 번역 후 한 낱말이 1pt 만 나가도 세어진다.
+OUTSIDE_MIN_WORDS = 5   # 비율과 함께 **개수**도 넘어야 파손으로 본다
 
 
 def _words(page: pymupdf.Page) -> list[tuple[float, float, float, float, str]]:
@@ -165,7 +173,7 @@ def inspect_page(orig: pymupdf.Page, trans: pymupdf.Page, page_no: int) -> PageV
 
     if v.overlap > OVERLAP_MAX:
         v.reasons.append(f"겹침 +{v.overlap*100:.0f}%")
-    if v.outside > OUTSIDE_MAX:
+    if v.outside > OUTSIDE_MAX and v.outside * len(tw) >= OUTSIDE_MIN_WORDS:
         v.reasons.append(f"영역이탈 +{v.outside*100:.0f}%")
     if v.collision > COLLISION_MAX:
         v.reasons.append(f"줄충돌 +{v.collision*100:.0f}%")

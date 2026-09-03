@@ -1102,3 +1102,48 @@ def test_renaming_a_local_variable_does_not_invalidate():
     a = proxy._behavior_hash("def f(x):\n    return x > 3\n")
     assert proxy._behavior_hash("def f(x):\n\n\n    return x > 3\n") == a, \
         "빈 줄이 지문을 바꿨다"
+
+
+# ── 성긴 쪽에서 단어 두세 개로 파손 판정이 나면 안 된다 ──────────────────
+def _page_with(words_xy, w=720, h=405):
+    """주어진 좌표에 낱말을 놓은 한 쪽짜리 PDF."""
+    import pymupdf
+    d = pymupdf.open()
+    p = d.new_page(width=w, height=h)
+    for i, (x, y) in enumerate(words_xy):
+        p.insert_text((x, y), f"word{i}", fontsize=10)
+    return d
+
+
+def test_a_couple_of_stray_words_is_not_damage_on_a_sparse_page():
+    """슬라이드는 낱말이 20~40개라 두세 개만 나가도 비율이 문턱을 넘는다.
+
+    실측(L03 발표자료):
+        21쪽  전체 24낱말 중 2낱말이 밖 →  8%  → '파손'
+         5쪽  전체 43낱말 중 3낱말이 밖 →  7%  → '파손'
+
+    이 지표는 낱말이 수백 개인 교재 쪽을 상정하고 만들어졌다. 거기서 3% 는
+    의미가 있지만 24낱말짜리 쪽에서는 **한 낱말이 4%** 다. 그래서 쪽당
+    19초짜리 재번역이 낱말 두 개 때문에 돌았다.
+
+    비율만이 아니라 **나간 낱말 수**도 함께 봐야 한다.
+    """
+    from pdfko import qa
+    inside = [(100 + (i % 6) * 60, 100 + (i // 6) * 30) for i in range(22)]
+    orig = _page_with(inside)
+    # 낱말 두 개만 기준 상자 밖으로
+    trans = _page_with(inside[:20] + [(20, 380), (700, 390)])
+    v = qa.inspect_page(orig[0], trans[0], 1)
+    assert not v.broken, f"낱말 2개로 파손 판정: {v.reasons}"
+    orig.close(); trans.close()
+
+
+def test_many_stray_words_is_still_damage():
+    """반대로 낱말이 여럿 밀려났으면 그대로 잡아야 한다."""
+    from pdfko import qa
+    inside = [(100 + (i % 6) * 60, 100 + (i // 6) * 30) for i in range(22)]
+    orig = _page_with(inside)
+    trans = _page_with(inside[:8] + [(15, 370 + (i % 3) * 8) for i in range(14)])
+    v = qa.inspect_page(orig[0], trans[0], 1)
+    assert v.broken and any("이탈" in r for r in v.reasons), v.reasons
+    orig.close(); trans.close()
