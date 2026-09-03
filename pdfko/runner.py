@@ -464,6 +464,10 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         # 우회하는 것만 막으면 되므로 이 실행만 안 쓰면 충분하다.
         "--ignore-cache",
         "--no-auto-extract-glossary",
+        # 기본값 5 는 `Yes`(3자)·`No`(2자) 같은 도식 라벨을 통째로 건너뛴다.
+        # 번역본에 영어가 그대로 남고, 그림혼재로 잡힌다. 짧은 것도 보낸다 —
+        # 프록시가 산문 여부를 따로 보므로 쓰레기까지 번역하지는 않는다.
+        "--min-text-length", "1",
         "--primary-font-family", "serif",
         "--watermark-output-mode", "no_watermark",
         "--only-include-translated-page",
