@@ -96,6 +96,7 @@ class Server:
         self.pp = proxy_port
         self.glyphmap: Path | None = None   # 깨진 합자 사전 (cli 가 채운다)
         self.vocab: Path | None = None      # 원본 어휘 (cli 가 채운다)
+        self.columns: Path | None = None    # 도식 열 간격 (cli 가 채운다)
         self.user_sig: str = ""             # 추가 지시문 지문 (cli 가 채운다)
         self.borrowed = False               # 이미 떠 있던 ollama 를 빌려 쓰는가
         self._procs: list[subprocess.Popen] = []
@@ -335,6 +336,10 @@ class Server:
             env["PDFKO_VOCAB"] = str(self.vocab)
         else:
             env.pop("PDFKO_VOCAB", None)
+        if self.columns and self.columns.exists():
+            env["PDFKO_COLUMNS"] = str(self.columns)
+        else:
+            env.pop("PDFKO_COLUMNS", None)
         env["USER_RULES"] = self.user_sig
         log = open(self.work / "logs" / "proxy.log", "ab")
         self._procs.append(subprocess.Popen(

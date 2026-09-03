@@ -1283,3 +1283,39 @@ def test_korean_text_is_not_sent_for_translation(src, already):
     87개와 36개가 몰려 있다.
     """
     assert proxy.already_korean(src) is already
+
+
+# ── 여러 칸 공백으로 나뉜 열을 되살린다 ──────────────────────────────────
+_COLS = {
+    "wrong decision wrong tool infinite loop":
+        "wrong decision     wrong tool         infinite loop",
+}
+
+
+def test_column_gaps_are_restored_before_translating():
+    """도식의 열은 원래 간격을 되살려 보내야 뜻이 산다.
+
+    실측(AI Agent 1주차 20쪽). 원본 PDF 에서 세 열은 **여러 칸 공백**으로만
+    나뉜 한 줄이다.
+
+        'wrong decision     wrong tool         infinite loop'
+
+    babeldoc 은 보내기 전에 연속 공백을 하나로 줄인다. 그러면 번역기가 한
+    문장으로 읽는다. 실제로 모델에 넣어 재 봤다:
+
+        공백 뭉갠 채  → '잘못된 결정, 부적절한 도구, 무한 루프'   (한 문장)
+        간격 되살림   → '잘못된 결정    잘못된 도구    무한 루프'  (칸 유지)
+
+    칸마다 따로 번역할 것 없이 **간격만 되돌려 주면** 모델이 알아서 칸으로
+    읽는다. 열 경계는 원본 PDF 에만 남아 있으므로 곁길로 받는다.
+    """
+    from pdfko.proxy import restore_gaps
+    got = restore_gaps("wrong decision wrong tool infinite loop", _COLS)
+    assert got == "wrong decision     wrong tool         infinite loop"
+
+
+def test_a_normal_sentence_is_left_alone():
+    """열 목록에 없으면 손대지 않는다."""
+    from pdfko.proxy import restore_gaps
+    assert restore_gaps("A policy maps states to actions.", _COLS) is None
+    assert restore_gaps("wrong decision wrong tool infinite loop", {}) is None

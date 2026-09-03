@@ -72,6 +72,11 @@ GLYPHMAP = glyphmap.load(Path(os.environ["GLYPHMAP"])) if os.environ.get("GLYPHM
 # 원본 문서의 어휘. 낱말 한가운데서 잘려 온 조각을 알아보는 데 쓴다
 # (`truncated_tail`). 합자 사전과 같은 통로로 받는다 — 요청 본문만 봐서는
 # 알 수 없고 **원본을 봐야만** 판정할 수 있는 신호이기 때문이다.
+SOURCE_COLUMNS: dict[str, str] = (
+    json.loads(Path(os.environ["PDFKO_COLUMNS"]).read_text(encoding="utf-8"))
+    if os.environ.get("PDFKO_COLUMNS") and Path(os.environ["PDFKO_COLUMNS"]).exists()
+    else {})
+
 SOURCE_VOCAB: set[str] = (
     set(Path(os.environ["PDFKO_VOCAB"]).read_text(encoding="utf-8").split())
     if os.environ.get("PDFKO_VOCAB") and Path(os.environ["PDFKO_VOCAB"]).exists()
@@ -605,6 +610,30 @@ def already_korean(src: str) -> bool:
     return bool(body.strip()) and hangul_ratio(body) >= 0.3
 
 
+_MULTISPACE = re.compile(r"\s{3,}")
+
+
+def restore_gaps(src: str, columns) -> str | None:
+    """도식의 열 간격을 되살린다. 해당 없으면 None.
+
+    원본 PDF 에서 열은 **여러 칸 공백**으로만 나뉜 한 줄인 경우가 있다.
+
+        'wrong decision     wrong tool         infinite loop'
+
+    babeldoc 은 보내기 전에 연속 공백을 하나로 줄인다. 그러면 번역기가 한
+    문장으로 읽어 세 칸을 인과 관계로 뭉갠다. 실측으로 모델에 직접 넣어 봤다:
+
+        공백 뭉갠 채  → '잘못된 결정, 부적절한 도구, 무한 루프'
+        간격 되살림   → '잘못된 결정    잘못된 도구    무한 루프'
+
+    칸마다 따로 번역할 것 없이 간격만 되돌려 주면 모델이 알아서 칸으로 읽는다.
+    열 경계는 원본에만 남아 있으므로 cli 가 곁길로 넘겨준다.
+    """
+    if not columns or not src:
+        return None
+    return columns.get(re.sub(r"\s+", " ", src).strip())
+
+
 class Reason(str):
     """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
 
@@ -946,6 +975,18 @@ async def chat(request: Request):
 
     ckey = item_key(user)
     results: dict[str, str] = {}
+
+    # 도식의 열 간격을 되살려서 보낸다. 뭉갠 채로 보내면 번역기가 세 칸을
+    # 한 문장으로 읽는다 — 실측으로 확인했다.
+    if SOURCE_COLUMNS and arr_idx >= 0 and items:
+        widened = [{**it, "input": g} if (g := restore_gaps(it.get("input", ""),
+                                                            SOURCE_COLUMNS)) else it
+                   for it in items]
+        if widened != items:
+            items = widened
+            m = fixed[arr_idx]
+            fixed[arr_idx] = {**m, "content": swap_array(m["content"], a0, a1, items)}
+            a1 = a0 + len(json.dumps(items, ensure_ascii=False, indent=1))
 
     # 이미 한국어인 항목은 번역기에 보내지 않는다. 보내면 글쓴이의 문장을
     # 고쳐 놓는다 — 실측으로 129개 중 36개(27%)가 그랬다.

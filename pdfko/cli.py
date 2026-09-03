@@ -20,6 +20,7 @@ from .repair import looks_damaged
 
 _HANGUL = re.compile(r"[가-힣]")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
+_MULTISPACE = re.compile(r"\s{3,}")
 
 
 def _c(s: str, code: str) -> str:
@@ -135,6 +136,28 @@ def build_vocab(src: Path, out: Path) -> int:
             words.update(w.lower() for w in _WORD_RE.findall(pg.get_text()))
     out.write_text("\n".join(sorted(words)), encoding="utf-8")
     return len(words)
+
+
+def build_columns(src: Path, out: Path) -> int:
+    """도식의 열 간격을 적어 둔다. → 줄 수
+
+    원본에서 열이 **여러 칸 공백**으로만 나뉜 줄을 모은다. babeldoc 은 보내기
+    전에 그 공백을 하나로 줄여서, 번역기가 세 칸을 한 문장으로 읽어 버린다.
+    공백을 뭉갠 형태를 열쇠로, 원래 간격이 살아 있는 줄을 값으로 넣는다.
+    """
+    import json as _json
+
+    import pymupdf
+    cols: dict[str, str] = {}
+    with pymupdf.open(src) as d:
+        for pg in d:
+            for b in pg.get_text("dict")["blocks"]:
+                for ln in b.get("lines", []):
+                    t = "".join(sp["text"] for sp in ln["spans"]).rstrip()
+                    if _MULTISPACE.search(t.strip()):
+                        cols[re.sub(r"\s+", " ", t).strip()] = t.strip()
+    out.write_text(_json.dumps(cols, ensure_ascii=False), encoding="utf-8")
+    return len(cols)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -384,6 +407,8 @@ def _main(argv: list[str] | None = None) -> int:
         n_vocab = build_vocab(src, vocab_path)
         srv.glyphmap = srv_glyphmap
         srv.vocab = vocab_path if n_vocab else None
+        cols_path = work / "columns.json"
+        srv.columns = cols_path if build_columns(src, cols_path) else None
         # 용어집·프롬프트가 바뀌면 캐시가 무효화되어야 한다. 요청 본문에서는
         # 뽑을 수 없다 — BabelDOC 은 그것들을 user 메시지 안에 말아 넣는다.
         srv.start_ollama()
