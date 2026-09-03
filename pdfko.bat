@@ -1,10 +1,16 @@
 @echo off
-REM pdfko 원샷 실행 (윈도우) — 이 파일을 더블클릭하세요.
+REM pdfko one-shot launcher (Windows) - double-click this file.
 REM
-REM 윈도우는 .ps1 을 더블클릭하면 실행하지 않고 메모장으로 엽니다. 그래서
-REM 실제 일은 pdfko.ps1 이 하고, 이 파일은 그걸 띄워 주기만 합니다.
-REM -ExecutionPolicy Bypass 는 이 실행에만 적용되고 시스템 설정을 바꾸지
-REM 않습니다 (기본값이 Restricted 라 이게 없으면 스크립트가 막힙니다).
+REM Windows opens .ps1 in Notepad on double-click instead of running it,
+REM so pdfko.ps1 does the real work and this file only launches it.
+REM -ExecutionPolicy Bypass applies to this run only; it does not change
+REM any system setting (the default is Restricted, which would block it).
+REM
+REM Keep this file ASCII-only. cmd.exe reads .bat in the OEM codepage
+REM (949 on Korean Windows), not UTF-8, so non-ASCII bytes get mis-decoded
+REM and cmd can run a fragment of a comment line as a command. Do not add
+REM a UTF-8 BOM here either - cmd would try to execute it. Korean notes
+REM live in pdfko.ps1, which is UTF-8 with BOM and handles them fine.
 
 cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pdfko.ps1"
