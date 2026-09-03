@@ -96,10 +96,22 @@ else
     work "번역 모델 내려받기 (5.8GB, 최초 1회만)"
     command -v hf >/dev/null 2>&1 || uv tool install -q huggingface_hub
     mkdir -p "$HERE/models"
-    hf download "$HF_REPO" --include "*Q6_K*" --local-dir "$HERE/models" \
-      || die "모델 내려받기 실패"
-    GGUF=$(find "$HERE/models" -name "$GGUF_NAME" -type f -print -quit)
-    [ -n "$GGUF" ] || die "받은 파일에서 $GGUF_NAME 을 찾지 못했습니다"
+    # 5.8GB 를 받는 동안 회선이 한 번 끊기는 건 드문 일이 아니다. 한 번
+    # 끊겼다고 여기서 죽으면 사용자는 처음부터 다시 실행해야 한다. hf 가
+    # 이어받기를 해 주므로 받은 만큼은 남는다 — 될 때까지 다시 부른다.
+    #
+    # 성공 판정은 종료 코드가 아니라 파일이 생겼는지로 한다. 받다 만 것은
+    # .incomplete 라 이 검사에 걸리지 않는다.
+    n=1
+    while [ "$n" -le 20 ]; do
+      hf download "$HF_REPO" --include "*Q6_K*" --local-dir "$HERE/models" || true
+      GGUF=$(find "$HERE/models" -name "$GGUF_NAME" -type f -print -quit)
+      [ -n "$GGUF" ] && break
+      work "연결이 끊겼습니다 — 이어받기 재시도 ($n/20)"
+      sleep 5
+      n=$((n + 1))
+    done
+    [ -n "$GGUF" ] || die "모델 내려받기 실패 — 다시 실행하면 받은 곳부터 이어받습니다"
   fi
   work "모델 등록 (1~2분)"
 fi
