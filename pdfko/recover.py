@@ -107,6 +107,7 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
         # 번역본에 영어가 그대로 남고, 그림혼재로 잡힌다. 짧은 것도 보낸다 —
         # 프록시가 산문 여부를 따로 보므로 쓰레기까지 번역하지는 않는다.
         "--min-text-length", "1",
+        "--split-short-lines",
             "--primary-font-family", "serif",
             "--watermark-output-mode", "no_watermark",
             "--only-include-translated-page",
