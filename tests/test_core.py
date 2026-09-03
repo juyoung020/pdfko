@@ -1070,3 +1070,35 @@ def test_width_is_judged_the_same_way_everywhere():
     # 짧은 라벨과 산문 없는 항목은 면제
     assert not proxy.too_wide("RL", "강화학습이라는 것")
     assert not proxy.too_wide("https://a.b/c", "https://a.b/c")
+
+
+# ── 캐시 지문은 동작만 본다 ──────────────────────────────────────────────
+def test_a_comment_does_not_invalidate_the_cache():
+    """주석·docstring 을 고쳤다고 500쪽을 다시 번역하면 안 된다.
+
+    예전 지문은 `proxy.py` 39,233자를 **텍스트 그대로** 해시했다. 그래서
+    오타 하나, 로그 문구 한 줄, 주석 한 글자만 고쳐도 지문이 달라지고
+    번역해 둔 모든 문서의 캐시가 죽었다. 500쪽이면 3시간이 날아간다.
+    """
+    a = proxy._behavior_hash("def f(x):\n    return x > 3\n")
+    b = proxy._behavior_hash(
+        "def f(x):\n    '''설명이 붙었다.'''\n    # 주석도 붙었다\n    return x > 3\n")
+    assert a == b, "주석·docstring 이 지문을 바꿨다"
+
+
+def test_a_changed_rule_does_invalidate_the_cache():
+    """반대로 판정이 바뀌면 반드시 무효화되어야 한다.
+
+    이게 이 장치의 존재 이유다. 규칙을 고쳐도 이미 캐시된 문단은 새 규칙을
+    거칠 기회가 없어, 고쳤다고 믿은 채 같은 결과를 받는 일이 네 번 있었다.
+    """
+    a = proxy._behavior_hash("def f(x):\n    return x > 3\n")
+    b = proxy._behavior_hash("def f(x):\n    return x > 4\n")
+    assert a != b, "문턱을 바꿨는데 지문이 그대로다"
+
+
+def test_renaming_a_local_variable_does_not_invalidate():
+    """이름만 바꾼 것도 동작이 아니다 — 다만 잡아내기 어려우면 무효화가 낫다."""
+    a = proxy._behavior_hash("def f(x):\n    return x > 3\n")
+    assert proxy._behavior_hash("def f(x):\n\n\n    return x > 3\n") == a, \
+        "빈 줄이 지문을 바꿨다"

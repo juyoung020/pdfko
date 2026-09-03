@@ -80,6 +80,32 @@ GLYPHMAP = glyphmap.load(Path(os.environ["GLYPHMAP"])) if os.environ.get("GLYPHM
 # 힌트가 섞여 있어 캐시가 산산조각 난다. 그래서 곁길로 받는다.
 USER_RULES = os.environ.get("USER_RULES", "")
 
+def _behavior_hash(src: str) -> str:
+    """소스의 **동작**만 남긴 지문. 주석·docstring·빈 줄·서식은 무시한다.
+
+    예전에는 소스를 텍스트 그대로 해시했다. 안전하긴 했지만 대가가 컸다 —
+    주석 한 글자, 로그 문구 한 줄만 고쳐도 지문이 달라져 번역해 둔 모든
+    문서의 캐시가 죽었다. 500쪽이면 3시간이 날아간다.
+
+    AST 로 파싱해 docstring 을 걷어내고 구조만 덤프한다. 판정이 바뀌면
+    구조가 바뀌므로 무효화는 그대로 일어나고, 글자만 고친 것은 지나간다.
+    """
+    import ast
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return hashlib.sha256(src.encode()).hexdigest()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef)) and body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            body.pop(0)
+    return hashlib.sha256(ast.dump(tree).encode()).hexdigest()
+
+
 # ── 규칙 지문 ──────────────────────────────────────────────────────────
 # 검증 규칙이나 프롬프트를 바꾸면 캐시가 자동으로 무효화되어야 한다.
 # 손으로 지우는 방식은 네 번 연속 실패했다 — 규칙을 고쳐도 이미 캐시된
@@ -95,8 +121,9 @@ def _rules_fingerprint(gm: dict[str, str] | None = None,
     스무 곳이 넘는다 — 정규식, hangul_ratio, split_runs, parse_output,
     CONCISE_RULE, repair() … 실측해 보니 여덟 군데를 바꿔도 지문이 그대로였다.
     같은 수정을 네 번 반복하게 만든 실패를 막으려던 장치가 정작 그 실패를
-    막지 못했다. 그래서 **모듈 전체**를 해시한다. 주석만 고쳐도 무효화되는
-    대가를 치르지만, 정확성 캐시에서는 그쪽이 옳다.
+    막지 못했다. 그래서 **모듈 전체**를 해시한다 — 다만 텍스트가 아니라
+    `_behavior_hash` 로 동작만 본다. 판정이 바뀌면 무효화되고, 주석·문구만
+    고친 것은 지나간다.
     """
     import inspect
     import sys as _sys
@@ -105,7 +132,7 @@ def _rules_fingerprint(gm: dict[str, str] | None = None,
     parts = []
     for mod in (_sys.modules[__name__], _r, _g):
         try:
-            parts.append(inspect.getsource(mod))
+            parts.append(_behavior_hash(inspect.getsource(mod)))
         except OSError:
             parts.append(getattr(mod, "__name__", "?"))
     # 합자 사전도 규칙의 일부다. 사전을 붙이면 지문이 달라져야
