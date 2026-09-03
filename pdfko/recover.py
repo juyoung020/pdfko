@@ -50,7 +50,7 @@ def _mark_reverted(page: pymupdf.Page) -> None:
 
 
 def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
-                     model: str, proxy_port: int, glossary: Path | None,
+                     model: str, proxy_port: int,
                      prompt_file: Path | None = None,
                      concise: bool = True) -> Path | None:
     """한 페이지만 다시 번역한다. 성공하면 그 1쪽짜리 PDF 경로.
@@ -107,8 +107,6 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
             "--working-dir", str(work / "work"),
             "--output", str(out),
         ]
-        if glossary:
-            cmd += ["--glossary-files", str(glossary)]
         # 사용자가 준 지시문은 여기서도 써야 한다. 예전에는 본 번역에만 붙고
         # 복구 재번역에서는 조용히 빠져서, 되살린 페이지만 문체가 달라졌다.
         if prompt_file and prompt_file.exists():
@@ -235,7 +233,7 @@ def _is_korean(one_page_pdf: Path, floor: float = 0.3) -> bool:
 
 def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
                  offset: int, src_pdf: Path, work: Path, *,
-                 model: str, proxy_port: int, glossary: Path | None,
+                 model: str, proxy_port: int,
                  prompt_file: Path | None = None,
                  on_step=None) -> list[Recovery]:
     """파손된 페이지를 사다리로 되살린다. 1단계 간결 재번역 → 2단계 원문 유지.
@@ -262,7 +260,7 @@ def repair_pages(trans_pdf: Path, orig_pdf: Path, severe: list[PageVerdict],
         got, why = None, ""
         try:
             got = retranslate_page(v.page, o, src_pdf, work, model=model,
-                                   proxy_port=proxy_port, glossary=glossary,
+                                   proxy_port=proxy_port,
                                    prompt_file=prompt_file)
         except Exception as e:
             got, why = None, f"재번역 실패: {type(e).__name__}: {e}"
@@ -334,7 +332,7 @@ def _fragment_note(log_dir: Path) -> list[str]:
 
 def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
                         src_pdf: Path, work: Path, *, model: str,
-                        proxy_port: int, glossary: Path | None,
+                        proxy_port: int,
                         prompt_file: Path | None = None,
                         on_step=None) -> list[Recovery]:
     """영어가 남은 페이지를 **다시 번역해서** 되살린다.
@@ -366,7 +364,7 @@ def repair_untranslated(trans_pdf: Path, orig_pdf: Path, offset: int,
         got, why = None, ""
         try:
             got = retranslate_page(page, o, src_pdf, work, model=model,
-                                   proxy_port=proxy_port, glossary=glossary,
+                                   proxy_port=proxy_port,
                                    prompt_file=prompt_file, concise=False)
         except Exception as e:
             why = f"재번역 실패: {type(e).__name__}: {e}"

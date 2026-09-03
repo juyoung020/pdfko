@@ -173,23 +173,6 @@ def test_jondae_is_rejected(rig):
     assert len(up.seen) == 2
 
 
-def test_the_last_attempt_drops_the_glossary(rig):
-    """용어집 표가 자리표시자 유실의 원인일 때 힌트만 더 붙여야 소용없다."""
-    body_glossary = "\n## Glossary\n| policy | 정책 |\n"
-
-    def probe(_items):
-        return arr("policy maps states to actions here and now")   # 계속 영어
-
-    up, cli = rig(probe, probe, probe)
-    items = [{"id": 0, "input": "A policy maps states to actions.",
-              "layout_label": "plain text"}]
-    cli.post("/v1/chat/completions", json={"model": "m", "messages": [
-        {"role": "user", "content": "Translate into ko-KR." + body_glossary
-         + "\n\n" + json.dumps(items)}]})
-    assert "Glossary" in up.seen[0]
-    assert "Glossary" not in up.seen[-1], "마지막 시도에도 용어집이 붙어 있다"
-
-
 def test_a_hopeless_item_comes_back_as_the_source(rig):
     """끝내 안 되면 **원문을 돌려준다.** 빈 문자열을 주면 페이지가 사라진다."""
     src = "A policy maps states to actions in every state of the world."

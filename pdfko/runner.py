@@ -95,7 +95,7 @@ class Server:
         self.op = ollama_port
         self.pp = proxy_port
         self.glyphmap: Path | None = None   # 깨진 합자 사전 (cli 가 채운다)
-        self.user_sig: str = ""             # 용어집·프롬프트 지문 (cli 가 채운다)
+        self.user_sig: str = ""             # 추가 지시문 지문 (cli 가 채운다)
         self.borrowed = False               # 이미 떠 있던 ollama 를 빌려 쓰는가
         self._procs: list[subprocess.Popen] = []
         _LIVE.append(self)
@@ -103,7 +103,7 @@ class Server:
     def expected_rules(self) -> str:
         """이 서버가 띄울 프록시가 가져야 할 규칙 지문.
 
-        합자 사전이나 용어집을 붙이면 자식의 지문이 부모와 달라진다. 부모의
+        합자 사전이나 추가 지시문을 붙이면 자식의 지문이 부모와 달라진다. 부모의
         `proxy.RULES` 를 그대로 비교하면 방금 띄운 프록시조차 낡았다고 판정해
         60초를 기다린 뒤 죽는다.
         """
@@ -116,7 +116,7 @@ class Server:
 
     @staticmethod
     def signature(*paths: Path | None) -> str:
-        """용어집·프롬프트 파일 내용의 지문. 바뀌면 캐시가 무효화되어야 한다."""
+        """추가 지시문 파일 내용의 지문. 바뀌면 캐시가 무효화되어야 한다."""
         import hashlib
         h = hashlib.sha256()
         for p in paths:
@@ -428,7 +428,7 @@ PARAMETER repeat_penalty 1.05
 
 
 def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
-                    model: str, proxy_port: int, glossary: Path | None,
+                    model: str, proxy_port: int,
                     prompt_file: Path | None, lang_out: str = "ko-KR",
                     qps: int = 30, workers: int = 8,
                     extra: list[str] | None = None) -> bool:
@@ -469,8 +469,6 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         "--working-dir", str(work / "work"),
         "--output", str(chunk.outdir),
     ]
-    if glossary:
-        cmd += ["--glossary-files", str(glossary)]
     if prompt_file and prompt_file.exists():
         cmd += ["--custom-system-prompt", prompt_file.read_text(encoding="utf-8")]
     if extra:

@@ -425,6 +425,26 @@ def has_prose(src: str) -> bool:
     return len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 4)
 
 
+def is_echo(src: str, tgt: str) -> bool:
+    """번역할 산문이 있었는데 한글이 없으면 반향이다. **판정은 여기서만.**
+
+    예전에는 통짜 항목이 `has_prose(src)`, 조각이 `라틴 8자 이상` 이라는
+    서로 다른 문턱을 썼다. 같은 질문에 두 가지 답을 가진 셈이라, 한쪽을
+    고쳐도 다른 쪽이 옛 판단을 계속했다.
+    """
+    return has_prose(src) and hangul_ratio(tgt) < 0.15
+
+
+def too_wide(src: str, tgt: str) -> bool:
+    """번역문이 원문보다 지나치게 넓은가. **판정은 여기서만.**
+
+    짧은 라벨과 산문 없는 항목(URL·수식)은 면제한다 — 자리가 모자라 글자가
+    겹치는 것은 본문이 길 때 생기는 일이다.
+    """
+    sw = est_width(src)
+    return has_prose(src) and sw >= 10 and est_width(tgt) / sw > WIDTH_MAX
+
+
 class Reason(str):
     """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
 
@@ -505,7 +525,7 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
 
         # 번역할 산문이 있었는데 한글이 없으면 반향이다.
         # 산문이 없으면(URL·수식·숫자뿐) 원문 그대로가 정답이므로 넘어간다.
-        if has_prose(src) and hangul_ratio(tgt) < 0.15:
+        if is_echo(src, tgt):
             return False, Reason("hangul", f"id {iid} hangul {hangul_ratio(tgt):.2f}")
 
         # 반쪽 번역. 한글 비율만 보면 통과한다 — 80%가 한국어인 문단에 영어
@@ -515,11 +535,9 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
             return False, Reason("english", f"id {iid} 영어 잔류")
 
         # 길이 폭주. 짧은 라벨과 수식은 면제한다.
-        sw = est_width(src)
-        if has_prose(src) and sw >= 10:
-            ratio = est_width(tgt) / sw
-            if ratio > WIDTH_MAX:
-                return False, Reason("width", f"id {iid} width {ratio:.2f}x")
+        if too_wide(src, tgt):
+            ratio = est_width(tgt) / est_width(src)
+            return False, Reason("width", f"id {iid} width {ratio:.2f}x")
     return True, Reason("", "")
 
 
@@ -791,22 +809,13 @@ async def chat(request: Request):
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"] or ""
 
-    # 용어집 표를 지운다. 표가 "반드시 이 역어를 쓰라"고 못박으면 모델이
-    # 그 낱말을 앞으로 끌어오면서 **자리표시자를 흡수하는** 일이 있다. 검증에서
-    # 실측으로 잡혔고(용어집 있음 0/3, 없음 3/3), 그 결과 통짜 번역이 세 번
-    # 다 실패해 조각 모드로 떨어졌다 — 조각 모드는 어순을 굳혀 훨씬 나쁜
-    # 한국어를 만든다. 마지막 한 번은 용어집 없이 물어본다. 실패한 뒤에만
-    # 도는 길이라 정상 경로에는 영향이 없다.
-    _GLOSS_RE = re.compile(r"\n#+\s*Glossary.*?(?=\n#+\s|\Z)", re.S | re.I)
 
-    def msgs_for(subset, hint=None, drop_glossary=False):
+    def msgs_for(subset, hint=None):
         """배열 자리에 subset 만 끼운 메시지 목록."""
         out = []
         for i, m in enumerate(fixed):
             if i == arr_idx:
                 c = swap_array(m["content"], a0, a1, subset)
-                if drop_glossary:
-                    c = _GLOSS_RE.sub("\n", c)
                 out.append({**m, "content": c})
             elif m.get("role") != "system":
                 out.append(m)
@@ -833,12 +842,9 @@ async def chat(request: Request):
         cache_put(ckey, user, raw, 1)
         return JSONResponse(_shape(raw))
 
-    async def fragment_pass(it, drop_glossary=False) -> tuple[str | None, int]:
+    async def fragment_pass(it) -> tuple[str | None, int]:
         """자리표시자 사이의 본문만 번역해 되끼운다. → (결과, 갈아낀 조각 수)
 
-        `drop_glossary` 는 (c) 사후 구제에서만 켠다. 거기는 통짜가 세 번 다
-        실패한 뒤라 "마지막 한 번은 용어집 없이"가 적용되어야 하는 자리다.
-        (a) 사전 조각은 그 문단의 **첫** 시도이므로 용어집을 유지한다.
 
         실패하면 (None, 0). 아래 (a) 사전 조각과 (c) 사후 구제가 **반드시**
         같은 코드를 지나가야 한다. 예전에는 검증이 (c) 에만 있어서 (a) 로
@@ -851,8 +857,7 @@ async def chat(request: Request):
             return it.get("input", ""), 0      # 자리표시자뿐 — 번역할 게 없다
         sub = [{"id": k, "input": runs[k], "layout_label": "fragment"} for k in idx]
         try:
-            raw = await call(msgs_for(sub, drop_glossary=drop_glossary),
-                             0.1, max_tok)
+            raw = await call(msgs_for(sub), 0.1, max_tok)
             got = {str(o.get("id")): item_output(o)
                    for o in (parse_output(raw) or []) if isinstance(o, dict)}
         except Exception:
@@ -863,8 +868,7 @@ async def chat(request: Request):
             if KEEP_RE.search(v) or _STYLE_NEAR.search(v):
                 return False
             # 라틴 문자가 8자 넘는 조각인데 한글이 거의 없으면 번역이 아니다.
-            if sum(1 for c in src_run if c.isalpha() and c.isascii()) >= 8 \
-                    and hangul_ratio(v) < 0.15:
+            if is_echo(src_run, v):
                 return False
             return leftover_english(v) is None
 
@@ -890,9 +894,7 @@ async def chat(request: Request):
                      "the fragment it is. Do not complete the sentence, do not "
                      "add words, and do not leave any of them in English.")
             try:
-                raw2 = await call(msgs_for(sub2, hint2,
-                                           drop_glossary=drop_glossary),
-                                  0.0, max_tok)
+                raw2 = await call(msgs_for(sub2, hint2), 0.0, max_tok)
                 got2 = {str(o.get("id")): item_output(o)
                         for o in (parse_output(raw2) or []) if isinstance(o, dict)}
             except Exception:
@@ -912,16 +914,14 @@ async def chat(request: Request):
         # 전부 통과한다 — 실측으로 영어 반향이 그대로 성공 처리됐다.
         # 다시 짜맞춘 **결과 전체**를 원문과 견줘 한 번 더 본다.
         src_txt = it.get("input", "")
-        if sum(1 for c in src_txt if c.isalpha() and c.isascii()) >= 8 \
-                and hangul_ratio(rebuilt) < 0.15:
+        if is_echo(src_txt, rebuilt):
             return None, 0
         # 길이도 봐야 한다. 조각 모드는 자리표시자와 한글만 검사하고 폭은
         # 보지 않았다 — 실측으로 원문의 **9.41배**짜리 문단이 그대로 나갔고,
         # 사전 조각 경로(a)는 그것을 캐시에까지 넣었다. 같은 문단을 통짜
         # 경로에 넣으면 `width 9.41x` 로 거부되는 바로 그 텍스트다.
         # 길이 폭주는 페이지를 깨뜨리는 가장 흔한 원인이다.
-        sw = est_width(src_txt)
-        if sw >= 10 and est_width(rebuilt) / sw > WIDTH_MAX:
+        if too_wide(it.get("input", ""), rebuilt):
             return None, 0
         return rebuilt, hit
 
@@ -952,10 +952,7 @@ async def chat(request: Request):
         if not pending:
             break
         try:
-            # 마지막 시도는 용어집 없이. 용어집이 자리표시자 유실의 원인일 때
-            # 힌트만 더 붙여 봐야 소용이 없다 — 표가 그대로 남아 있기 때문이다.
-            raw = await call(msgs_for(pending, hint,
-                                      drop_glossary=(attempt == len(temps))),
+            raw = await call(msgs_for(pending, hint),
                              temp, max_tok)
         except Exception as e:
             log_jsonl("errors.jsonl", {"ts": time.time(), "err": repr(e)})
@@ -1000,10 +997,7 @@ async def chat(request: Request):
     if pending:
         rescued_frag = []
         for it in pending:
-            # 통짜가 세 번 다 실패한 뒤다. 용어집 표가 원인일 수 있으므로
-            # 마지막 이 한 번은 표 없이 물어본다 — 위 (b) 의 마지막 시도와
-            # 같은 이유이고, 실제로 상류가 보는 **맨 마지막** 요청이 여기다.
-            rebuilt, hit = await fragment_pass(it, drop_glossary=True)
+            rebuilt, hit = await fragment_pass(it)
             if rebuilt is None or not hit:
                 continue
             # 여기서는 캐시에 넣지 않는다. 조각 모드는 어순이 조각 단위로

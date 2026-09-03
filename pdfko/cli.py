@@ -160,13 +160,6 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--chunk", type=int, default=40, help="구간 크기(쪽), 기본 40")
     p.add_argument("--model", default="hy-mt2-7b", help="ollama 모델 태그")
     p.add_argument("--gguf", type=Path, help="등록할 GGUF 파일 (최초 1회)")
-    p.add_argument("--glossary", type=Path, help="용어집 CSV (source,target)")
-    p.add_argument("--no-glossary", action="store_true",
-                   help="용어 자동 통일을 끈다 (기본은 켜짐)")
-    p.add_argument("--make-glossary", type=Path, nargs="?", const=Path("glossary.csv"),
-                   metavar="CSV",
-                   help="이 문서에서 용어 후보를 뽑아 CSV 로 저장하고 끝낸다 "
-                        "(번역어 칸은 비어 있으니 채워서 --glossary 로 쓰면 된다)")
     p.add_argument("--prompt", type=Path, help="추가 번역 지시문 파일")
     p.add_argument("--no-recover", action="store_true",
                    help="파손 페이지를 원문으로 되돌리지 않습니다")
@@ -179,31 +172,17 @@ def _main(argv: list[str] | None = None) -> int:
     # --recheck 는 번역을 하지 않으므로 캐시를 비우는 것이 무의미하다.
     # 조용히 무시하면 사용자는 캐시가 지워진 줄 안다. PPTX 쪽은 이미
     # 무시되는 옵션을 오류로 막고 있는데 여기만 빠져 있었다.
-    if a.make_glossary and (a.no_glossary or a.glossary):
-        other = "--no-glossary" if a.no_glossary else "--glossary"
-        print(f"--make-glossary 와 {other} 는 같이 쓸 수 없습니다 "
-              f"(--make-glossary 는 후보만 뽑고 번역하지 않습니다)")
-        return 2
-
     if a.recheck and a.fresh:
         print("--recheck 와 --fresh 는 같이 쓸 수 없습니다 "
               "(--recheck 는 번역을 하지 않으므로 캐시를 비울 이유가 없습니다)")
         return 2
 
-    # 없는 용어집·프롬프트를 조용히 무시하면 안 된다. 오타 하나로 용어집이
+    # 없는 프롬프트 파일을 조용히 무시하면 안 된다. 오타 하나로 지시문이
     # 빠진 채 500쪽을 돌리고, 사용자는 적용된 줄 안다. 번역 엔진은 없는
     # 파일을 그냥 무시하고, `Server.signature` 도 OSError 를 삼킨다.
-    for flag, path in (("--glossary", a.glossary), ("--prompt", a.prompt)):
-        if path and not path.expanduser().exists():
-            print(f"{flag} 파일이 없습니다: {path}")
-            return 2
-    if a.glossary:
-        from . import terms as _t
-        why = _t.check_csv(a.glossary.expanduser())
-        if why:
-            print(f"용어집을 쓸 수 없습니다 — {why}")
-            print("  예:  source,target\n       policy,정책")
-            return 2
+    if a.prompt and not a.prompt.expanduser().exists():
+        print(f"--prompt 파일이 없습니다: {a.prompt}")
+        return 2
 
     src = a.pdf.expanduser().resolve()
     if not src.exists():
@@ -227,13 +206,10 @@ def _main(argv: list[str] | None = None) -> int:
         return 3
 
     # PPTX 에서 무시되는 PDF 전용 옵션은 조용히 넘기지 않는다.
-    # --glossary 를 준 사용자가 용어집이 적용된 줄 알고 배포하면 안 된다.
     if src.suffix.lower() in (".pptx", ".ppt"):
         ignored = [n for n, v in (("--pages", a.pages), ("--chunk", a.chunk != 40),
-                                  ("--glossary", a.glossary), ("--prompt", a.prompt),
+                                  ("--prompt", a.prompt),
                                   ("--recheck", a.recheck), ("--fresh", a.fresh),
-                                  ("--make-glossary", a.make_glossary),
-                                  ("--no-glossary", a.no_glossary),
                                   ("--no-recover", a.no_recover)) if v]
         if ignored:
             print("PPTX 에서는 쓸 수 없는 옵션입니다: " + ", ".join(ignored))
@@ -265,36 +241,6 @@ def _main(argv: list[str] | None = None) -> int:
         return 2
     first, last = rng
 
-    # 용어집 만들기는 번역 없이 끝난다. 추론 서버도 필요 없다.
-    if a.make_glossary:
-        from . import terms
-        step("용어 후보 추출")
-        rows = terms.extract(src, first, last)
-        if not rows:
-            print("  반복되는 전문 용어를 찾지 못했습니다 "
-                  "(문서가 짧거나 텍스트 레이어가 없을 수 있습니다)")
-            return 1
-        out_csv = a.make_glossary.expanduser().resolve()
-        # 손으로 채운 파일을 말없이 덮어쓰면 안 된다. 문서에 적힌 흐름이
-        # "뽑아서 → 손으로 채우고 → 다시 넘긴다"이므로, 덮어쓸 가능성이
-        # 가장 큰 파일이 바로 사용자가 한 시간 들여 채운 그 파일이다.
-        if out_csv.exists():
-            print(f"이미 있는 파일입니다: {out_csv}")
-            print("  덮어쓰지 않았습니다. 다른 이름을 주거나 파일을 옮기세요.")
-            return 2
-        try:
-            terms.write_csv(out_csv, rows)
-        except OSError as e:
-            print(f"용어집을 저장할 수 없습니다: {out_csv}  ({e.strerror or e})")
-            return 2
-        info(f"{len(rows)}개 후보 → {out_csv}")
-        info("번역어 칸을 채운 뒤 --glossary 로 넘기세요. 필요 없는 줄은 지우면 됩니다.")
-        print()
-        for n, t in rows[:10]:
-            print(f"    {t}  ({n}회)")
-        if len(rows) > 10:
-            print(f"    … 외 {len(rows) - 10}개")
-        return 0
 
     work = (a.work or paths.work_for(src)).expanduser().resolve()
     out = (a.out or work / f"{src.stem}_한국어.pdf").expanduser().resolve()
@@ -387,11 +333,9 @@ def _main(argv: list[str] | None = None) -> int:
                 (c.outdir / ".done").unlink(missing_ok=True)
             # 문단 캐시도 지워야 한다. 예전에는 엔진 캐시와 구간 표식만
             # 지워서, `--fresh` 를 줘도 프록시가 옛 번역을 그대로 돌려줬다.
-            # 용어집을 바꾼 사용자가 기대하는 탈출구가 바로 이 옵션이다.
             # WAL/SHM 까지 지워야 한다 — 남겨 두면 지운 행이 되살아난다.
             for suffix in ("", "-wal", "-shm"):
                 (work / "cache" / f"trans.db{suffix}").unlink(missing_ok=True)
-            (work / "용어집.csv").unlink(missing_ok=True)   # 용어집도 새로
             info("엔진 캐시·문단 캐시·구간 표식을 지웠습니다")
 
         # 깨진 합자 사전을 원본에서 직접 만든다.
@@ -414,12 +358,6 @@ def _main(argv: list[str] | None = None) -> int:
             glyphmap.save(gm, gm_path)
             srv_glyphmap = gm_path
             info(f"손상된 합자 {len(gm)}쌍을 원본에서 찾았습니다")
-
-        # 용어 후보는 서버 기동 전에 뽑아 둔다(추론이 필요 없는 단계).
-        auto_terms = []
-        if not a.glossary and not a.no_glossary:
-            from . import terms as _terms
-            auto_terms = _terms.extract(src, first, last)
 
         step("서버 기동")
         srv = runner.Server(work, a.model)
@@ -446,41 +384,7 @@ def _main(argv: list[str] | None = None) -> int:
             warn(f"    OLLAMA_HOST=127.0.0.1:{srv.op} ollama list   ← 확인")
             warn(f"    pdfko {src.name} --gguf <모델.gguf>          ← 최초 1회 등록")
             return 3
-        # 용어 통일은 **프록시를 띄우기 전에** 끝낸다. 용어집 지문은 프록시
-        # 기동 시점에 자식에게 넘어가므로, 그 뒤에 용어집을 만들면 캐시 키에
-        # 반영되지 않는다. 그러면 역어가 달라져도 옛 번역이 그대로 나온다.
-        glossary = a.glossary
-        # 작업 폴더에 이미 용어집이 있으면 **그대로 쓴다.** README 가 "마음에
-        # 안 드는 역어가 있으면 그 파일을 고쳐서 다시 넘기면 됩니다" 라고
-        # 안내하는데, 정작 다음 실행이 그 파일을 말없이 덮어썼다. 사용자가
-        # 손본 것을 도구가 지우면 안 된다.
-        kept_glossary = work / "용어집.csv"
-        if not glossary and kept_glossary.exists():
-            glossary = kept_glossary
-            auto_terms = []
-            info(f"{kept_glossary.name} 를 그대로 씁니다 "
-                 f"(새로 만들려면 이 파일을 지우거나 --fresh)")
-        if auto_terms:
-            step("용어 통일")
-            from . import terms as _terms
-            # 무엇이 이 분야의 용어인지는 모델이 고른다. 낱말 목록으로 거르면
-            # 그 순간 분야 전용 도구가 된다. 둘 다 추론 서버에 직접 묻는다.
-            auto_terms = _terms.keep_terms(auto_terms, port=srv.op, model=a.model)
-            picked = _terms.decide(auto_terms, port=srv.op, model=a.model,
-                                   via_proxy=False)
-            if picked:
-                gpath = work / "용어집.csv"
-                _terms.write_csv(gpath, auto_terms, picked)
-                glossary = gpath
-                info(f"{len(picked)}개 용어의 역어를 고정했습니다 → {gpath.name}")
-                for en, ko in list(picked.items())[:5]:
-                    info(f"    {en} → {ko}")
-                if len(picked) > 5:
-                    info(f"    … 외 {len(picked) - 5}개")
-            else:
-                warn("용어 역어를 정하지 못했습니다 — 용어집 없이 진행합니다")
-
-        srv.user_sig = runner.Server.signature(glossary, a.prompt)
+        srv.user_sig = runner.Server.signature(a.prompt)
         srv.start_proxy(sys.executable)
         info(f"미들웨어 :{srv.pp}")
         pl = srv.proxy_log_dir()
@@ -495,7 +399,7 @@ def _main(argv: list[str] | None = None) -> int:
             info(f"[{i}/{len(chunks)}] {c.name} …")
             ok = runner.translate_chunk(
                 c, src, work, model=a.model, proxy_port=srv.pp,
-                glossary=glossary, prompt_file=a.prompt)
+                prompt_file=a.prompt)
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")
@@ -556,7 +460,7 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 recs = recover.repair_pages(
                     out, src, severe, offset, src, work,
-                    model=a.model, proxy_port=srv.pp, glossary=glossary,
+                    model=a.model, proxy_port=srv.pp,
                     prompt_file=a.prompt,
                     on_step=lambda p, what: info(
                         f"  {p}쪽 {what}" if p else f"  {what}"))
@@ -584,7 +488,7 @@ def _main(argv: list[str] | None = None) -> int:
             try:
                 more = recover.repair_untranslated(
                     out, src, offset, src, work,
-                    model=a.model, proxy_port=srv.pp, glossary=glossary,
+                    model=a.model, proxy_port=srv.pp,
                     prompt_file=a.prompt,
                     on_step=lambda p, what: info(f"  {p}쪽 {what}"))
                 recs += more

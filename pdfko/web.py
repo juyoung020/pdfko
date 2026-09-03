@@ -41,28 +41,11 @@ ROOT = paths.out_base()
 MAX_UPLOAD = int(os.environ.get("PDFKO_MAX_UPLOAD", 512 * 1024 * 1024))
 
 
-def glossary_plan(uploaded, kept, disabled: bool):
-    """용어집을 무엇으로 쓸지 정한다. → (쓸 경로 또는 None, 새로 뽑아야 하나)
-
-    끄기는 명시적인 "쓰지 마라"이므로 올린 파일과 남은 파일 **둘 다** 이긴다.
-    같은 문서는 같은 작업 폴더를 쓰기 때문에 지난번 용어집.csv 가 남아 있는데,
-    끄기를 눌렀는데 그걸 조용히 다시 쓰면 토글이 아무 일도 안 하는 셈이 된다.
-    """
-    if disabled:
-        return None, False
-    if uploaded:
-        return uploaded, False
-    if kept.exists():
-        return kept, False
-    return None, True
-
-
 @dataclass
 class Job:
     name: str
     src: Path
     work: Path
-    no_glossary: bool = False
     out: Path | None = None
     report: Path | None = None
     stage: str = "대기"
@@ -106,8 +89,8 @@ _lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- 작업 실행
-def _run(job: Job, pages: str, glossary: Path | None) -> None:
-    from . import clipscan, glyphmap, qa, recover, runner, terms
+def _run(job: Job, pages: str) -> None:
+    from . import clipscan, glyphmap, qa, recover, runner
     import pymupdf
 
     try:
@@ -184,34 +167,9 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
                 "모델 'hy-mt2-7b' 이 추론 서버에 없습니다. 터미널에서 "
                 "`pdfko <파일> --gguf <모델.gguf>` 로 한 번 등록해 주세요.")
 
-        # 용어 통일은 **프록시를 띄우기 전에** 끝내야 한다. user_sig 는
-        # start_proxy 가 자식에게 넘길 때만 읽히므로, 나중에 넣으면 이미 뜬
-        # 프록시에는 반영되지 않는다. 그러면 용어집이 캐시 키에 안 들어가고,
-        # 다시 돌렸을 때 옛 번역이 그대로 나온다. 용어 선별은 추론 서버만
-        # 있으면 되므로 여기서 해도 된다.
-        kept_glossary = job.work / "용어집.csv"
-        glossary, build = glossary_plan(glossary, kept_glossary, job.no_glossary)
-        if job.no_glossary:
-            job.log.append("용어 통일을 끄고 번역합니다")
-        elif glossary is kept_glossary:
-            job.log.append(f"{kept_glossary.name} 를 그대로 씁니다")
-        if build:
-            job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
-            cand = terms.extract(src, first, last)
-            cand = terms.keep_terms(cand, port=srv.op, model="hy-mt2-7b")
-            picked = terms.decide(cand, port=srv.op, model="hy-mt2-7b",
-                                  via_proxy=False)
-            if picked:
-                gpath = job.work / "용어집.csv"
-                terms.write_csv(gpath, cand, picked)
-                glossary = gpath
-                job.log.append(f"{len(picked)}개 용어의 역어를 고정했다: "
-                               + ", ".join(f"{k}→{v}"
-                                           for k, v in list(picked.items())[:5]))
-
         # CLI 와 같은 인자로 서명해야 한다. 다르면 같은 책을 명령줄에서
         # 돌리다 브라우저로 이어받을 때 캐시가 통째로 빗나간다.
-        srv.user_sig = runner.Server.signature(glossary, None)
+        srv.user_sig = runner.Server.signature(None)
         srv.start_proxy(__import__("sys").executable)
 
         chunks = runner.plan_chunks(first, last, 40, job.work)
@@ -224,7 +182,7 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
                 continue
             job.say("번역", f"{c.name}  ({i}/{len(chunks)} 구간)", pct)
             if not runner.translate_chunk(c, src, job.work, model="hy-mt2-7b",
-                                          proxy_port=srv.pp, glossary=glossary,
+                                          proxy_port=srv.pp,
                                           prompt_file=None):
                 raise RuntimeError(
                     f"{c.name} 구간 번역 실패 — logs/part_{c.name}.log 를 확인하세요")
@@ -264,7 +222,7 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
             try:
                 recs = recover.repair_pages(
                     out, src, severe, offset, src, job.work,
-                    model="hy-mt2-7b", proxy_port=srv.pp, glossary=glossary,
+                    model="hy-mt2-7b", proxy_port=srv.pp,
                     on_step=lambda p, what: job.say(
                         "자동 복구", f"{p}쪽 {what}" if p else what, 96))
             except Exception as e:
@@ -283,7 +241,7 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
             try:
                 recs += recover.repair_untranslated(
                     out, src, offset, src, job.work,
-                    model="hy-mt2-7b", proxy_port=srv.pp, glossary=glossary,
+                    model="hy-mt2-7b", proxy_port=srv.pp,
                     on_step=lambda p, what: job.say(
                         "영어가 남은 쪽 재번역", f"{p}쪽 {what}", 97))
             except Exception as e:
@@ -341,8 +299,8 @@ async def index() -> str:
 
 @app.post("/start")
 async def start(file: UploadFile = File(...), pages: str = Form(""),
-                fresh: str = Form(""), no_glossary: str = Form(""),
-                glossary: UploadFile | None = File(None)):
+                fresh: str = Form(""),
+                ):
     global JOB
     with _lock:
         if JOB and not JOB.done:
@@ -407,23 +365,8 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
             (work / "parts").mkdir(parents=True, exist_ok=True)
             for suffix in ("", "-wal", "-shm"):
                 (work / "cache" / f"trans.db{suffix}").unlink(missing_ok=True)
-        gl = None
-        if glossary is not None and glossary.filename:
-            gl = work / "glossary.csv"
-            with gl.open("wb") as f:
-                shutil.copyfileobj(glossary.file, f)
-            # 헤더가 틀리면 번역 엔진이 조용히 무시하고 그냥 진행한다.
-            # 사용자는 용어집이 적용된 줄 알고 배포하게 된다.
-            import csv as _csv
-            with gl.open(encoding="utf-8-sig", errors="replace") as f:
-                cols = {c.strip() for c in next(_csv.reader(f), [])}
-            if not {"source", "target"} <= cols:
-                return JSONResponse(
-                    {"error": "용어집 첫 줄은 source,target 이어야 합니다"},
-                    status_code=400)
-        JOB = Job(name=src.name, src=src, work=work,
-                  no_glossary=bool(no_glossary))
-        threading.Thread(target=_run, args=(JOB, pages, gl), daemon=True).start()
+        JOB = Job(name=src.name, src=src, work=work)
+        threading.Thread(target=_run, args=(JOB, pages), daemon=True).start()
     return {"ok": True}
 
 
@@ -510,13 +453,8 @@ pre{background:color-mix(in srgb,var(--fg) 5%,transparent);border-radius:10px;pa
     <label class="f" for="pages">쪽 범위</label>
     <input type="text" id="pages" placeholder="예: 13-502 (비우면 전체)">
   </div>
-  <div class="row">
-    <label class="f" for="glo">용어집</label>
-    <input type="file" id="glo" accept=".csv" style="display:block;font-size:13px">
-  </div>
   <div class="row" style="justify-content:flex-end">
     <label class="opt"><input type="checkbox" id="fresh"> 처음부터 다시 번역</label>
-    <label class="opt"><input type="checkbox" id="nogloss"> 용어 통일 끄기</label>
     <button id="go" disabled>번역 시작</button>
   </div>
 </div>
@@ -555,8 +493,6 @@ $('#go').onclick=async()=>{
   fd.append('file',picked);
   fd.append('pages',$('#pages').value.trim());
   if($('#fresh').checked)fd.append('fresh','1');
-  if($('#nogloss').checked)fd.append('no_glossary','1');
-  if($('#glo').files[0])fd.append('glossary',$('#glo').files[0]);
   const r=await fetch('/start',{method:'POST',body:fd});
   if(!r.ok){const j=await r.json();alert(j.error||'시작하지 못했습니다');$('#go').disabled=false;return}
   /* 이전 작업의 오류 문구와 내려받기 단추를 즉시 지운다. poll() 이 2초 뒤에

@@ -285,16 +285,16 @@ def test_proxy_port_is_not_stolen(tmp_path):
         assert srv._free_port(taken) != taken   # 비켜 간다
 
 
-def test_glossary_changes_the_cache_key(tmp_path):
-    """용어집을 바꾸면 캐시가 빗나가야 한다.
+def test_a_changed_prompt_file_changes_the_cache_key(tmp_path):
+    """추가 지시문을 바꾸면 캐시가 빗나가야 한다.
 
     한때 요청 본문의 system 메시지를 해시했는데, BabelDOC 은 system 을 아예
     보내지 않는다(전부 user 메시지 한 덩어리). 빈 문자열의 해시가 상수로
-    박혀서, 용어집을 바꿔도 옛 번역이 그대로 나왔다.
+    박혀서, 지시문을 바꿔도 옛 번역이 그대로 나왔다.
     """
     from pdfko import runner
-    g1 = tmp_path / "a.csv"; g1.write_text("source,target\nreward,보상\n")
-    g2 = tmp_path / "b.csv"; g2.write_text("source,target\nreward,리워드\n")
+    g1 = tmp_path / "a.txt"; g1.write_text("존댓말을 쓰지 마라\n")
+    g2 = tmp_path / "b.txt"; g2.write_text("수식 기호는 그대로 두라\n")
     s1, s2 = runner.Server.signature(g1), runner.Server.signature(g2)
     assert s1 != s2
     assert s1 == runner.Server.signature(g1)
@@ -346,143 +346,6 @@ def test_splice_page_checks_geometry(tmp_path):
             recover.splice_page(tgt, 2, bad, tgt)
 
 
-def test_term_extraction_is_domain_agnostic(tmp_path):
-    """분야 어휘 목록 없이 문서에서 용어를 뽑는다.
-
-    강화학습 용어를 도구에 박아 두면 그 책에만 맞는 도구가 된다. 여기서는
-    생물학 문서를 넣고 생물학 용어가 나오는지 본다.
-    """
-    import pymupdf
-    from pdfko import terms
-    body = ("The cell membrane regulates transport. Membrane proteins embedded in "
-            "the cell membrane act as ion channels. An ion channel opens when the "
-            "membrane potential changes. Membrane potential depends on ion channel "
-            "density. Cell membrane repair follows membrane potential collapse. "
-            "Ion channels and membrane proteins together set the membrane potential. ")
-    src = tmp_path / "bio.pdf"
-    d = pymupdf.open()
-    for _ in range(3):
-        p = d.new_page()
-        y = 80
-        for line in [body[i:i + 90] for i in range(0, len(body), 90)] * 3:
-            p.insert_text((60, y), line, fontsize=9)
-            y += 14
-    d.save(src); d.close()
-
-    got = [t for _, t in terms.extract(src, min_count=3, top=20)]
-    assert any("membrane" in t for t in got), got
-    # 기능어는 후보가 되면 안 된다
-    assert not {"the", "and", "when", "with"} & set(got)
-
-
-def test_generated_glossary_is_parseable(tmp_path):
-    """만든 CSV 가 그대로 --glossary 로 되돌아가야 한다. 주석·여분 칸 금지."""
-    import csv
-    from pdfko import terms
-    out = tmp_path / "g.csv"
-    terms.write_csv(out, [(9, "value function"), (5, "off-policy")])
-    rows = list(csv.DictReader(out.read_text(encoding="utf-8").splitlines()))
-    assert [r["source"] for r in rows] == ["value function", "off-policy"]
-    assert all(r["target"] == "" for r in rows)      # 사용자가 채울 자리
-
-
-def test_decide_rejects_bad_term_translations(monkeypatch):
-    """역어로 쓸 수 없는 응답은 버린다. 문장이 통째로 오면 용어집이 망가진다."""
-    from pdfko import terms
-    fake = {0: "가치 함수",          # 정상
-            1: "value function",     # 영어 반향
-            2: "이 용어는 정책을 뜻한다.",   # 문장으로 돌아옴
-            3: "",                   # 빈 응답
-            4: "정책"}               # 정상
-    monkeypatch.setattr(terms, "translate_batch", lambda *a, **k: fake, raising=False)
-    import pdfko.client as _c
-    monkeypatch.setattr(_c, "translate_batch", lambda *a, **k: fake)
-    got = terms.decide([(9, "value function"), (8, "echo"), (7, "sentence"),
-                        (6, "empty"), (5, "policy")], port=1, model="m")
-    assert got == {"value function": "가치 함수", "policy": "정책"}
-
-
-def test_stoplist_has_no_content_words():
-    """STOP 은 영어 기능어만 담는다. 내용어가 하나라도 들어가면 분야 도구가 된다.
-
-    한때 잡음을 줄이려고 `learning`, `method`, `system` 을 넣었다. 머신러닝
-    교재에서 `learning` 은 막아야 할 잡음이 아니라 가장 중요한 용어다.
-    """
-    from pdfko.terms import STOP
-    content = {"learning", "learn", "method", "system", "problem", "model", "policy",
-               "reward", "agent", "state", "value", "action", "function", "network",
-               "cell", "gradient", "error", "signal", "control", "search", "solution",
-               "energy", "force", "market", "gene", "protein", "algorithm",
-               # 숫자·서수·형용사도 안 된다. 이것들이 막고 있던 것:
-               #   second messenger(세포생물학) · first order(수학) · third party(법학)
-               #   next generation(유전체학) · even function(수학) · still image(영상)
-               "one", "two", "three", "four", "five", "first", "second", "third",
-               "next", "last", "even", "still", "just"}
-    assert not (STOP & content), STOP & content
-
-
-def test_keep_terms_drops_common_words(monkeypatch):
-    """무엇이 용어인지는 목록이 아니라 모델이 고른다.
-
-    형식은 **항목별 참/거짓**이다. "골라서 배열로 돌려달라"고 하면 어떤
-    분야에서는 모델이 통째로 `[]` 를 뱉는다 — 실측으로 헌법학 용어에
-    5회 연속 빈 배열이었고, 그러면 폴백이 잡음까지 전부 통과시킨다.
-    """
-    import json
-    from pdfko import terms
-
-    class _Resp:
-        def __init__(self, body): self._b = body
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    def fake_urlopen(req, timeout=0):
-        sent = json.loads(req.data)["messages"][0]["content"]
-        cands = json.loads(sent[sent.find("["):])
-        verdict = {c: (" " in c or "-" in c) for c in cands}    # 구만 용어라 치자
-        return _Resp(json.dumps(
-            {"choices": [{"message": {"content": json.dumps(verdict)}}]}).encode())
-
-    # terms 는 함수 안에서 urllib 를 임포트하므로 전역 urlopen 을 갈아끼운다
-    import urllib.request as _u
-    monkeypatch.setattr(_u, "urlopen", fake_urlopen)
-    rows = [(9, "value function"), (8, "after"), (7, "off-policy"), (6, "better")]
-    got = [t for _, t in terms.keep_terms(rows, port=1, model="m")]
-    assert got == ["value function", "off-policy"]
-
-
-def test_keep_terms_survives_a_dead_model(monkeypatch):
-    """모델이 답을 못 하면 후보를 통째로 살린다. 용어를 잃는 쪽이 더 비싸다."""
-    from pdfko import terms
-    import urllib.request as _u
-
-    def boom(*a, **k):
-        raise OSError("upstream down")
-
-    monkeypatch.setattr(_u, "urlopen", boom)
-    rows = [(9, "value function"), (8, "after")]
-    assert terms.keep_terms(rows, port=1, model="m") == rows
-
-
-def test_stemming_asks_the_document_not_a_word_list():
-    """`-s` 로 끝나는 단수 명사를 망가뜨리면 안 된다.
-
-    `bias→bia`, `analysis→analysi`, `physics→physic` 이 되면 문서에 없는
-    문자열이 용어집에 실린다. 그 피해는 생물학·물리학·통계학에만 가고
-    강화학습은 멀쩡하다 — 분야에 따라 결과가 달라지는 바로 그 상태다.
-    예외 목록 대신 **문서에 단수형이 실제로 있는지**로 판단한다.
-    """
-    from pdfko.terms import _norm
-    doc = {"state", "states", "policy", "policies", "channel", "channels",
-           "bias", "analysis", "physics", "species", "lens", "virus", "axis"}
-    assert _norm("states", doc) == "state"          # 단수형이 있으니 접는다
-    assert _norm("policies", doc) == "policy"
-    assert _norm("channels", doc) == "channel"
-    for solo in ("bias", "analysis", "physics", "species", "lens", "virus", "axis"):
-        assert _norm(solo, doc) == solo, solo       # 단수형이 없으니 그대로
-
-
 def test_style_word_in_prose_is_not_rejected():
     """본문에 `style` 이 정당하게 나오는 문서를 거부하면 안 된다.
 
@@ -511,31 +374,6 @@ def test_system_prompt_names_no_subject_area():
     for field in ("machine-learning", "machine learning", "reinforcement",
                   "biology", "chemistry", "physics", "law", "medicine"):
         assert field not in low, field
-
-
-def test_keep_terms_survives_an_empty_verdict(monkeypatch):
-    """모델이 빈 답을 주면 후보를 통째로 살린다.
-
-    실측으로 헌법학 용어에 `[]` 가 5회 연속 나왔다. 그때 아무것도 안 남기면
-    그 분야만 용어 통일이 통째로 사라진다. 용어를 잃는 쪽이 더 비싸다.
-    """
-    import json
-    from pdfko import terms
-    import urllib.request as _u
-
-    class _Resp:
-        def __init__(self, b): self._b = b
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    def empty(req, timeout=0):
-        return _Resp(json.dumps(
-            {"choices": [{"message": {"content": "{}"}}]}).encode())
-
-    monkeypatch.setattr(_u, "urlopen", empty)
-    rows = [(9, "judicial review"), (8, "due process")]
-    assert terms.keep_terms(rows, port=1, model="m") == rows
 
 
 def test_coverage_catches_untranslated_output(tmp_path):
@@ -585,98 +423,9 @@ def test_model_store_is_shared_not_per_workdir():
         assert probe not in runner.MODEL_STORE.parents
 
 
-def test_glossary_uses_the_spelling_the_document_actually_has(tmp_path):
-    """용어집의 원어는 **원문에 그대로 있는 문자열**이어야 한다.
-
-    번역 엔진은 용어집 원어를 원문 텍스트에 그대로 대조한다. 우리가 합자를
-    복구하고 기호를 걷어낸 깨끗한 철자를 넣으면 한 번도 걸리지 않는다.
-    실측: 용어집에 `off-policy` 를 넣었는데 원문에는 `o↵-policy` 만 169회,
-    `state-action` 을 넣었는데 원문에는 엔대시 `state–action` 만 91회 있었다.
-    """
-    import csv
-    import pymupdf
-    from pdfko import terms
-    body = ("The o↵-policy method updates the state–action pair while "
-            "the o↵-policy target di↵ers from behaviour. ")
-    src = tmp_path / "s.pdf"
-    d = pymupdf.open()
-    for _ in range(3):
-        p = d.new_page()
-        y = 60
-        for line in [body] * 8:
-            p.insert_text((40, y), line, fontsize=8)
-            y += 16
-    d.save(src); d.close()
-
-    rows = terms.extract(src, min_count=3)
-    got = {t for _, t in rows}
-    assert any("policy" in t for t in got), got
-    # 합자가 복구된 깨끗한 철자로 후보가 잡히고
-    key = next(t for t in got if "policy" in t)
-    # 실제 표기는 원문에 그대로 있어야 한다
-    raw = "".join(pymupdf.open(src)[i].get_text() for i in range(3))
-    surfaces = terms.SURFACES.get(key, set())
-    assert surfaces and all(s in raw for s in surfaces), (key, surfaces)
-
-    out = tmp_path / "g.csv"
-    terms.write_csv(out, rows, {key: "비활성 정책"})
-    sources = [r["source"] for r in
-               csv.DictReader(out.read_text(encoding="utf-8").splitlines())]
-    assert sources and all(s in raw for s in sources), sources
-
-
-def test_write_csv_survives_hostile_targets(tmp_path):
-    """역어에 쉼표·따옴표가 들어가도 CSV 가 깨지면 안 된다.
-
-    f-string 으로 이어 붙이던 때는 쉼표 하나에 칸이 밀려 항목이 조용히
-    사라지고, 개행이 들어가면 엔진의 CSV 파서가 죽었다.
-    """
-    import csv
-    from pdfko import terms
-    terms.SURFACES.clear()
-    out = tmp_path / "g.csv"
-    terms.write_csv(out, [(9, "sample mean"), (8, "policy")],
-                    {"sample mean": '표본 평균, 샘플 평균', "policy": '"정책"'})
-    rows = list(csv.DictReader(out.read_text(encoding="utf-8").splitlines()))
-    assert {r["source"] for r in rows} == {"sample mean", "policy"}
-    assert rows[0]["target"] == "표본 평균, 샘플 평균"   # 칸이 밀리지 않는다
-
-
-def test_decide_rejects_letterless_and_placeholder_targets(monkeypatch):
-    """`hangul_ratio` 는 글자가 없으면 1.0 이라, 숫자·기호가 역어로 통과했다."""
-    from pdfko import terms
-    import pdfko.client as _c
-    bad = {0: "19", 1: "—", 2: "| 표 |", 3: "{v1} 노름", 4: "가치 함수입니다"}
-    monkeypatch.setattr(_c, "translate_batch", lambda *a, **k: bad)
-    got = terms.decide([(9, f"t{i}") for i in range(5)], port=1, model="m")
-    assert got == {}
-
-
-def test_bad_glossary_is_refused_not_ignored(tmp_path):
-    """잘못된 용어집을 조용히 무시하면 안 된다.
-
-    번역 엔진은 헤더가 틀린 CSV 를 말없이 건너뛰고 그냥 번역한다. 사용자는
-    용어집이 적용된 줄 알고 500쪽 결과를 쓰게 된다.
-    """
-    from pdfko import terms
-    good = tmp_path / "g.csv"
-    good.write_text("source,target,tgt_lng\npolicy,정책,\n", encoding="utf-8")
-    assert terms.check_csv(good) == ""
-
-    bad_head = tmp_path / "b.csv"
-    bad_head.write_text("word,korean\npolicy,정책\n", encoding="utf-8")
-    assert "source,target" in terms.check_csv(bad_head)
-
-    empty = tmp_path / "e.csv"
-    empty.write_text("source,target\n", encoding="utf-8")
-    assert terms.check_csv(empty)
-
-    assert terms.check_csv(tmp_path / "nope.csv")      # 없는 파일
-
-
-def test_cli_and_web_sign_glossaries_the_same_way():
+def test_cli_and_web_sign_the_same_way():
     """지문이 갈리면 같은 책을 명령줄→브라우저로 이어받을 때 캐시가 통째로
-    빗나간다. cli 는 (glossary, prompt), web 은 (glossary) 로 서명하고 있었다."""
+    빗나간다. 예전에 cli 와 web 이 서로 다른 인자로 서명하고 있었다."""
     import inspect
     from pdfko import cli, web
     cli_sig = [l for l in inspect.getsource(cli._main).splitlines()
@@ -761,7 +510,7 @@ def test_recovery_failures_carry_a_reason(tmp_path, monkeypatch):
         v = qa.PageVerdict(page=2, words=200)
         v.overlap, v.reasons = 0.99, ["겹침99%"]
         recs = recover.repair_pages(trans, orig, [v], 0, orig, work,
-                                    model="m", proxy_port=9, glossary=None)
+                                    model="m", proxy_port=9)
         rep = work / "r.md"
         recover.write_report(rep, [v], recs, 0)
         return rep.read_text(encoding="utf-8")
@@ -840,21 +589,6 @@ def test_malformed_style_tag_without_id_is_caught():
     bad = "이중 스케일에 대해서는 (Konda<style '5'>, 치치클리스) 를 참고한다"
     ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": bad}])
     assert not ok and "style" in why
-
-
-def test_existing_glossary_is_not_overwritten(tmp_path, monkeypatch):
-    """사용자가 손본 용어집을 다음 실행이 지우면 안 된다.
-
-    README 는 "마음에 안 드는 역어가 있으면 그 파일을 고쳐서 다시 넘기면
-    됩니다" 라고 안내하는데, 정작 그냥 다시 돌리면 말없이 덮어썼다.
-    실측으로 손으로 고친 역어가 사라졌다.
-    """
-    import inspect
-    from pdfko import cli
-    src = inspect.getsource(cli._main)
-    # 이미 있으면 그대로 쓰고, --fresh 일 때만 새로 만든다
-    assert "kept_glossary" in src
-    assert 'unlink(missing_ok=True)   # 용어집도 새로' in src
 
 
 def test_engine_cache_is_bypassed_not_deleted():
@@ -1056,7 +790,7 @@ def test_untranslated_pages_reach_a_repair_loop(tmp_path, monkeypatch):
     assert [p for p, _ in recover.leftover_pages(trans)] == [1]
     monkeypatch.setattr(recover, "retranslate_page", lambda *a, **k: good)
     recs = recover.repair_untranslated(trans, orig, 0, orig, tmp_path,
-                                       model="m", proxy_port=1, glossary=None)
+                                       model="m", proxy_port=1)
     assert [r.action for r in recs] == ["retranslated"], recs
     assert not recover.leftover_pages(trans), "갈아 끼운 뒤에도 영어가 남았다"
 
@@ -1081,7 +815,7 @@ def test_untranslated_repair_never_reverts_to_english(tmp_path, monkeypatch):
 
     monkeypatch.setattr(recover, "retranslate_page", lambda *a, **k: None)
     recs = recover.repair_untranslated(trans, orig, 0, orig, tmp_path,
-                                       model="m", proxy_port=1, glossary=None)
+                                       model="m", proxy_port=1)
     assert [r.action for r in recs] == ["kept"], recs
     assert recs[0].note, "왜 못 고쳤는지 남겨야 한다"
     assert trans.read_bytes() == before, "원문으로 되돌려 버렸다"
@@ -1236,48 +970,6 @@ def test_the_whole_deck_still_passes(tmp_path):
     assert has_text
 
 
-# ── 용어집 끄기 토글 (웹) ────────────────────────────────────────────────
-def test_the_toggle_skips_glossary_even_if_one_was_kept(tmp_path):
-    """끄면 이전 실행이 남긴 용어집.csv 도 쓰지 않는다.
-
-    같은 문서는 같은 작업 폴더를 쓰므로, 한 번 만든 용어집이 남아 있다.
-    끄기를 눌렀는데 그걸 조용히 다시 쓰면 토글이 아무 일도 안 하는 셈이다.
-    """
-    from pdfko.web import glossary_plan
-    kept = tmp_path / "용어집.csv"
-    kept.write_text("source,target\n")
-    assert glossary_plan(None, kept, disabled=True) == (None, False)
-
-
-def test_the_toggle_wins_over_an_uploaded_file(tmp_path):
-    """끄기는 명시적인 '쓰지 마라'다. 올린 파일이 있어도 끈다."""
-    from pdfko.web import glossary_plan
-    up = tmp_path / "mine.csv"; up.write_text("source,target\n")
-    kept = tmp_path / "용어집.csv"
-    assert glossary_plan(up, kept, disabled=True) == (None, False)
-
-
-def test_an_uploaded_glossary_is_used_as_is(tmp_path):
-    """사용자가 올렸으면 새로 뽑지 않는다."""
-    from pdfko.web import glossary_plan
-    up = tmp_path / "mine.csv"; up.write_text("source,target\n")
-    kept = tmp_path / "용어집.csv"
-    assert glossary_plan(up, kept, disabled=False) == (up, False)
-
-
-def test_a_kept_glossary_is_reused(tmp_path):
-    """같은 문서를 다시 돌리면 지난번 용어집을 재사용한다 (추출 3초를 아낀다)."""
-    from pdfko.web import glossary_plan
-    kept = tmp_path / "용어집.csv"; kept.write_text("source,target\n")
-    assert glossary_plan(None, kept, disabled=False) == (kept, False)
-
-
-def test_with_nothing_to_reuse_a_glossary_is_built(tmp_path):
-    """아무것도 없으면 이 문서에서 뽑는다 — 기본 동작."""
-    from pdfko.web import glossary_plan
-    assert glossary_plan(None, tmp_path / "없음.csv", disabled=False) == (None, True)
-
-
 # ── 판정 사유가 종류를 들고 다닌다 ───────────────────────────────────────
 def _verdict(src, tgt):
     return proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": tgt}])
@@ -1351,3 +1043,30 @@ def test_prose_that_echoes_is_still_a_failure():
     src = "A policy maps states to actions in every state of the world."
     ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": src}])
     assert not ok and why.kind == "hangul", why
+
+
+# ── 반향·폭 판정을 한 곳에서 ─────────────────────────────────────────────
+def test_an_echo_is_judged_the_same_way_everywhere():
+    """통짜 항목과 조각이 **같은 기준**으로 반향을 판정해야 한다.
+
+    예전에는 통짜는 `has_prose(src)`, 조각은 `라틴 8자 이상` 이라는 서로
+    다른 문턱을 썼다(proxy.py 508 대 867·916). 같은 질문에 두 가지 답을
+    가진 셈이라, 한쪽을 고쳐도 다른 쪽이 옛 판단을 계속했다.
+    """
+    src = "A policy maps states to actions."
+    assert proxy.is_echo(src, "a policy maps states to actions")
+    assert not proxy.is_echo(src, "정책은 상태를 행동으로 사상하는 함수이다.")
+    # 산문이 없으면 원문 그대로가 정답이므로 반향이 아니다
+    assert not proxy.is_echo("https://www.davidsilver.uk/",
+                             "https://www.davidsilver.uk/")
+    assert not proxy.is_echo("{v1} + {v2}", "{v1} + {v2}")
+
+
+def test_width_is_judged_the_same_way_everywhere():
+    """폭 초과도 한 곳에서만 판정한다 (예전 3곳)."""
+    src = "What is RL (with other domains)?"
+    assert proxy.too_wide(src, "RL이란 무엇인가 (다른 분야와의 연계를 포함하여)?")
+    assert not proxy.too_wide(src, "RL(다른 분야와의 연계)이란 무엇인가?")
+    # 짧은 라벨과 산문 없는 항목은 면제
+    assert not proxy.too_wide("RL", "강화학습이라는 것")
+    assert not proxy.too_wide("https://a.b/c", "https://a.b/c")

@@ -44,7 +44,7 @@ def _make_pdf(path, body, font, pages=2):
 @pytest.fixture
 def stubbed(tmp_path, monkeypatch):
     """추론과 번역 엔진을 걷어낸다. 남는 것은 파이프라인 뼈대뿐."""
-    from pdfko import runner, terms
+    from pdfko import runner
 
     src = _make_pdf(tmp_path / "src.pdf", ENG, "helv")
     ko = _make_pdf(tmp_path / "ko.pdf", KOR, "korea")
@@ -64,9 +64,6 @@ def stubbed(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.Server, "start_proxy", lambda self, py: None)
     monkeypatch.setattr(runner.Server, "model_ready", lambda self: True)
     monkeypatch.setattr(runner, "stop_all", lambda: None)
-    # 용어 단계는 모델이 필요하다 — 껍데기만 남긴다
-    monkeypatch.setattr(terms, "keep_terms", lambda rows, **k: rows[:3])
-    monkeypatch.setattr(terms, "decide", lambda rows, **k: {})
     return src
 
 
@@ -87,7 +84,7 @@ def test_web_runs_end_to_end(stubbed, tmp_path, monkeypatch):
     work = tmp_path / "wjob"
     work.mkdir()
     job = web.Job(name="src.pdf", src=stubbed, work=work)
-    web._run(job, "", None)
+    web._run(job, "")
     assert job.done and not job.error, job.error
     assert job.out and job.out.exists()
     assert job.report and job.report.exists()
@@ -112,7 +109,7 @@ def test_both_paths_do_the_same_steps():
     web_src = inspect.getsource(web._run)
     for step in ("preflight", "clipscan.scan", "clipscan.clean",
                  "glyphmap.build_table",
-                 "model_ready", "keep_terms", "decide",
+                 "model_ready",
                  "plan_chunks", "translate_chunk", "merge", "qa.scan",
                  "coverage", "mixed_language_figures", "repair_pages",
                  "write_report", "cleanup_work"):
