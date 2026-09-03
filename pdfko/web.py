@@ -41,11 +41,28 @@ ROOT = paths.out_base()
 MAX_UPLOAD = int(os.environ.get("PDFKO_MAX_UPLOAD", 512 * 1024 * 1024))
 
 
+def glossary_plan(uploaded, kept, disabled: bool):
+    """용어집을 무엇으로 쓸지 정한다. → (쓸 경로 또는 None, 새로 뽑아야 하나)
+
+    끄기는 명시적인 "쓰지 마라"이므로 올린 파일과 남은 파일 **둘 다** 이긴다.
+    같은 문서는 같은 작업 폴더를 쓰기 때문에 지난번 용어집.csv 가 남아 있는데,
+    끄기를 눌렀는데 그걸 조용히 다시 쓰면 토글이 아무 일도 안 하는 셈이 된다.
+    """
+    if disabled:
+        return None, False
+    if uploaded:
+        return uploaded, False
+    if kept.exists():
+        return kept, False
+    return None, True
+
+
 @dataclass
 class Job:
     name: str
     src: Path
     work: Path
+    no_glossary: bool = False
     out: Path | None = None
     report: Path | None = None
     stage: str = "대기"
@@ -173,10 +190,12 @@ def _run(job: Job, pages: str, glossary: Path | None) -> None:
         # 다시 돌렸을 때 옛 번역이 그대로 나온다. 용어 선별은 추론 서버만
         # 있으면 되므로 여기서 해도 된다.
         kept_glossary = job.work / "용어집.csv"
-        if not glossary and kept_glossary.exists():
-            glossary = kept_glossary
+        glossary, build = glossary_plan(glossary, kept_glossary, job.no_glossary)
+        if job.no_glossary:
+            job.log.append("용어 통일을 끄고 번역합니다")
+        elif glossary is kept_glossary:
             job.log.append(f"{kept_glossary.name} 를 그대로 씁니다")
-        if not glossary:
+        if build:
             job.say("용어 통일", "이 문서의 용어를 찾는 중", 11)
             cand = terms.extract(src, first, last)
             cand = terms.keep_terms(cand, port=srv.op, model="hy-mt2-7b")
@@ -322,7 +341,7 @@ async def index() -> str:
 
 @app.post("/start")
 async def start(file: UploadFile = File(...), pages: str = Form(""),
-                fresh: str = Form(""),
+                fresh: str = Form(""), no_glossary: str = Form(""),
                 glossary: UploadFile | None = File(None)):
     global JOB
     with _lock:
@@ -402,7 +421,8 @@ async def start(file: UploadFile = File(...), pages: str = Form(""),
                 return JSONResponse(
                     {"error": "용어집 첫 줄은 source,target 이어야 합니다"},
                     status_code=400)
-        JOB = Job(name=src.name, src=src, work=work)
+        JOB = Job(name=src.name, src=src, work=work,
+                  no_glossary=bool(no_glossary))
         threading.Thread(target=_run, args=(JOB, pages, gl), daemon=True).start()
     return {"ok": True}
 
@@ -496,6 +516,7 @@ pre{background:color-mix(in srgb,var(--fg) 5%,transparent);border-radius:10px;pa
   </div>
   <div class="row" style="justify-content:flex-end">
     <label class="opt"><input type="checkbox" id="fresh"> 처음부터 다시 번역</label>
+    <label class="opt"><input type="checkbox" id="nogloss"> 용어 통일 끄기</label>
     <button id="go" disabled>번역 시작</button>
   </div>
 </div>
@@ -534,6 +555,7 @@ $('#go').onclick=async()=>{
   fd.append('file',picked);
   fd.append('pages',$('#pages').value.trim());
   if($('#fresh').checked)fd.append('fresh','1');
+  if($('#nogloss').checked)fd.append('no_glossary','1');
   if($('#glo').files[0])fd.append('glossary',$('#glo').files[0]);
   const r=await fetch('/start',{method:'POST',body:fd});
   if(!r.ok){const j=await r.json();alert(j.error||'시작하지 못했습니다');$('#go').disabled=false;return}

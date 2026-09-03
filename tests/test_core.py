@@ -1231,3 +1231,45 @@ def test_the_whole_deck_still_passes(tmp_path):
     src = _slide_pdf(tmp_path / "deck.pdf", 15, 340)
     _, _, has_text = preflight(src)
     assert has_text
+
+
+# ── 용어집 끄기 토글 (웹) ────────────────────────────────────────────────
+def test_the_toggle_skips_glossary_even_if_one_was_kept(tmp_path):
+    """끄면 이전 실행이 남긴 용어집.csv 도 쓰지 않는다.
+
+    같은 문서는 같은 작업 폴더를 쓰므로, 한 번 만든 용어집이 남아 있다.
+    끄기를 눌렀는데 그걸 조용히 다시 쓰면 토글이 아무 일도 안 하는 셈이다.
+    """
+    from pdfko.web import glossary_plan
+    kept = tmp_path / "용어집.csv"
+    kept.write_text("source,target\n")
+    assert glossary_plan(None, kept, disabled=True) == (None, False)
+
+
+def test_the_toggle_wins_over_an_uploaded_file(tmp_path):
+    """끄기는 명시적인 '쓰지 마라'다. 올린 파일이 있어도 끈다."""
+    from pdfko.web import glossary_plan
+    up = tmp_path / "mine.csv"; up.write_text("source,target\n")
+    kept = tmp_path / "용어집.csv"
+    assert glossary_plan(up, kept, disabled=True) == (None, False)
+
+
+def test_an_uploaded_glossary_is_used_as_is(tmp_path):
+    """사용자가 올렸으면 새로 뽑지 않는다."""
+    from pdfko.web import glossary_plan
+    up = tmp_path / "mine.csv"; up.write_text("source,target\n")
+    kept = tmp_path / "용어집.csv"
+    assert glossary_plan(up, kept, disabled=False) == (up, False)
+
+
+def test_a_kept_glossary_is_reused(tmp_path):
+    """같은 문서를 다시 돌리면 지난번 용어집을 재사용한다 (추출 3초를 아낀다)."""
+    from pdfko.web import glossary_plan
+    kept = tmp_path / "용어집.csv"; kept.write_text("source,target\n")
+    assert glossary_plan(None, kept, disabled=False) == (kept, False)
+
+
+def test_with_nothing_to_reuse_a_glossary_is_built(tmp_path):
+    """아무것도 없으면 이 문서에서 뽑는다 — 기본 동작."""
+    from pdfko.web import glossary_plan
+    assert glossary_plan(None, tmp_path / "없음.csv", disabled=False) == (None, True)
