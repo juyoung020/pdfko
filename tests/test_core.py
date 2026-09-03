@@ -1229,3 +1229,30 @@ def test_rejoining_needs_a_vocabulary():
     from pdfko.proxy import rejoin_cut_words
     items = [{"id": 0, "input": "○ Under"}, {"id": 1, "input": "stand MDP"}]
     assert rejoin_cut_words(items, set())[0]["input"] == "○ Under"
+
+
+# ── 앞뒤 문장부호·공백은 배치 정보다 ─────────────────────────────────────
+@pytest.mark.parametrize("src,tgt,want", [
+    (": a (finite) set of states", "상태의 유한 집합", ": 상태의 유한 집합"),
+    (": a set of actions", "행동의 집합", ": 행동의 집합"),
+    (": diff", ": 차이", ": 차이"),               # 이미 있으면 그대로
+    ("stand ", "서다", "서다 "),                  # 꼬리 공백도 지킨다
+    ("A policy maps states.", "정책은 사상한다.", "정책은 사상한다."),
+    ("What is RL (with other domains)?", "RL이란 무엇인가?", "RL이란 무엇인가?"),
+    ("", "", ""),
+])
+def test_leading_and_trailing_punctuation_is_kept(src, tgt, want):
+    """원문 앞뒤의 문장부호·공백은 번역 대상이 아니라 **배치 정보**다.
+
+    실측(L03 11쪽): 수식 기호와 설명이 별개 항목으로 오는데, 설명이
+    `': a (finite) set of states'` 처럼 콜론+공백으로 시작한다. 그 `': '`
+    가 기호 `𝒮` 와 글자 사이를 벌려 주는 유일한 것이다.
+
+        ': a (finite) set of states'  →  '상태의 유한 집합'   ← 콜론이 사라졌다
+        결과물:  𝒮상태의 (유한한) 집합                        ← 기호에 올라탔다
+
+    모델은 같은 모양을 어떤 때는 지키고 어떤 때는 버린다
+    (`': differences against…'` 는 `': Markov 과정과의…'` 로 지켰다).
+    지시로 부탁할 일이 아니라 우리가 되돌려 놓으면 되는 일이다.
+    """
+    assert proxy.keep_edges(src, tgt) == want

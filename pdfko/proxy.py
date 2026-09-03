@@ -556,6 +556,39 @@ def rejoin_cut_words(items: list[dict], vocab) -> list[dict]:
     return out
 
 
+_EDGE_LEAD = re.compile(r"^\W*", re.U)
+_EDGE_TAIL = re.compile(r"\s*$", re.U)   # 꼬리는 **공백만**
+
+
+def keep_edges(src: str, tgt: str) -> str:
+    """원문 앞뒤의 문장부호·공백을 번역문에 되돌려 놓는다.
+
+    그것은 번역 대상이 아니라 **배치 정보**다. 실측(L03 11쪽): 수식 기호와
+    설명이 별개 항목으로 오는데, 설명이 `': a (finite) set of states'` 처럼
+    콜론+공백으로 시작한다. 그 `': '` 가 기호 `𝒮` 와 글자 사이를 벌려 주는
+    유일한 것이다.
+
+        ': a (finite) set of states'  →  '상태의 유한 집합'
+        결과물:  𝒮상태의 (유한한) 집합        ← 기호에 글자가 올라탔다
+
+    모델은 같은 모양을 어떤 때는 지키고 어떤 때는 버린다 — 지시로 부탁할
+    일이 아니라 받은 뒤 되돌려 놓으면 되는 일이다.
+    """
+    if not src or not tgt:
+        return tgt
+    # 자리표시자로 시작·끝나면 건드리지 않는다. `{v1}` 의 중괄호가 비문자라
+    # 앞머리로 잡히면 토큰이 깨진다.
+    lead = "" if PLACEHOLDER_RE.match(src) else _EDGE_LEAD.match(src).group()
+    # 꼬리는 공백만 지킨다. 문장부호까지 지키면 `(with other domains)?` 의
+    # `)?` 를 장식으로 알고 번역문 끝에 덧붙인다(실측으로 겪었다).
+    tail = _EDGE_TAIL.search(src).group()
+    if lead and not tgt.startswith(lead):
+        tgt = lead + tgt.lstrip()
+    if tail and not tgt.endswith(tail):
+        tgt = tgt.rstrip() + tail
+    return tgt
+
+
 class Reason(str):
     """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
 
@@ -1166,8 +1199,12 @@ async def chat(request: Request):
             results[str(it.get("id"))] = it.get("input", "")
     STATS["items_rescued"] += len(items) - len(pending)
 
-    out_items = [{"id": it.get("id"), "output": results.get(str(it.get("id")),
-                                                            it.get("input", ""))}
+    # 앞뒤 문장부호·공백은 배치 정보다. 경로마다 붙이면 오늘 고친 그 중복
+    # 병이 다시 생기므로, 응답을 조립하는 이 한 곳에서만 되돌린다.
+    out_items = [{"id": it.get("id"),
+                  "output": keep_edges(it.get("input", ""),
+                                       results.get(str(it.get("id")),
+                                                   it.get("input", "")))}
                  for it in items]
     text = json.dumps(out_items, ensure_ascii=False)
     # 문단별로 이미 저장했으므로 배치 단위 저장은 하지 않는다.
