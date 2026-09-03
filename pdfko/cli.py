@@ -155,7 +155,16 @@ def build_columns(src: Path, out: Path) -> int:
                 for ln in b.get("lines", []):
                     t = "".join(sp["text"] for sp in ln["spans"]).rstrip()
                     if _MULTISPACE.search(t.strip()):
-                        cols[re.sub(r"\s+", " ", t).strip()] = t.strip()
+                        # 간격을 **그 줄의 가장 좁은 칸 간격**으로 통일한다.
+                        # 실측(20쪽): 같은 줄에서 7칸은 그대로 그려졌는데
+                        # 21칸은 마침표 하나로 바뀌었다. 다른 줄의 5·9칸도
+                        # 살아남았다. 넓은 간격이 조판을 넘어뜨리는 것이므로,
+                        # 그 줄이 이미 그려낸 크기를 쓴다 — 임의로 정한 값이
+                        # 아니라 그 줄 자신이 증명한 값이다.
+                        body = t.strip()
+                        w = min(len(g) for g in _MULTISPACE.findall(body))
+                        cols[re.sub(r"\s+", " ", body)] = _MULTISPACE.sub(
+                            " " * w, body)
     out.write_text(_json.dumps(cols, ensure_ascii=False), encoding="utf-8")
     return len(cols)
 
