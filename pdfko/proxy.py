@@ -376,7 +376,7 @@ STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0, "fragment_retried": 0,
          "ligature_dissolved": 0, "json_repaired": 0, "truncated": 0,
-         "already_korean": 0}
+         "already_korean": 0, "nothing_to_translate": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -442,6 +442,29 @@ def leftover_english(tgt: str) -> str | None:
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+|\S+@\S+\.\S+")
 _WORDISH = re.compile(r"[A-Za-z][A-Za-z'-]*")
+
+
+def nothing_to_translate(src: str) -> bool:
+    """번역할 라틴 낱말이 하나도 없는가 — 있으면 모델에 보낼 이유가 없다.
+
+    실측(AI Agent 1주차 9쪽). 원문 `A {v1}B {v2}C {v3}D`(= `A →B →C →D`)를
+    평문 경로로 보냈더니 이렇게 돌아왔다:
+
+        A {v1}B {v2}C {v3}D  →  {v1}B {v2}C {v3}D 형태의 {v1}
+
+    앞의 `A` 가 사라지고, 없던 `형태의` 가 생기고, 자리표시자가 중복됐다.
+    보내지만 않았으면 멀쩡했을 항목이다.
+
+    `has_prose` 로 막으면 안 된다. 그건 "문장이라 할 만한가"를 묻는 검사라
+    `No` 도 걸린다 — 도식의 `아니오` 가 영어로 남는다. `--min-text-length 1`
+    을 넣은 이유가 바로 그 라벨들이었다.
+
+    기준은 **남는 라틴 낱말이 전부 홑글자인가**다. `A`·`B`·`C` 는 이름표라
+    번역 대상이 아니고, `No`·`STOP` 은 낱말이라 번역 대상이다.
+    """
+    t = PLACEHOLDER_RE.sub(" ", src or "")
+    t = STYLE_RE.sub(" ", t)
+    return not any(len(w) >= 2 for w in _WORDISH.findall(t))
 
 
 def has_prose(src: str) -> bool:
@@ -1115,6 +1138,12 @@ async def chat(request: Request):
         body = plain_target(user)
         if body and already_korean(body):
             STATS["already_korean"] += 1
+            return JSONResponse(_shape(body))
+        # 번역할 라틴 낱말이 없으면 보내지 않는다. 보내 봐야 모델이
+        # 지어낼 뿐이다 — 실측으로 `A →B →C →D` 가 `→B →C →D 형태의 →`
+        # 로 돌아왔다.
+        if body is not None and nothing_to_translate(body):
+            STATS["nothing_to_translate"] += 1
             return JSONResponse(_shape(body))
         try:
             raw = await call(out_msgs, temps[0], max_tok)

@@ -1511,3 +1511,50 @@ def test_the_caller_computes_the_same_stamp_the_writer_records():
         src, work, "5-8", work / "part", model="m", proxy_port=8123,
         prompt_file=None))
     assert asked == written
+
+
+# ── 홑글자뿐인 항목은 모델에 보내지 않는다 ──────────────────────────────
+def test_single_letters_have_nothing_to_translate():
+    """`A → B → C → D` 같은 항목은 번역할 게 없다.
+
+    실측(AI Agent 1주차 9쪽). 원문 `A {v1}B {v2}C {v3}D` 를 평문 경로로
+    모델에 보냈더니 이렇게 돌아왔다:
+
+        A {v1}B {v2}C {v3}D  →  {v1}B {v2}C {v3}D 형태의 {v1}
+
+    앞의 `A` 가 사라지고, 없던 `형태의` 가 생기고, 자리표시자 하나가
+    중복됐다. 보내지만 않았으면 멀쩡했을 항목이다.
+
+    그렇다고 "산문이 없으면 보내지 마"로 막으면 안 된다. `No` 도 그 검사에
+    걸려서 도식의 `아니오` 가 영어로 남는다 — `--min-text-length 1` 을 넣은
+    이유가 바로 그것이었다. 기준은 **남는 라틴 낱말이 전부 홑글자인가**다.
+    """
+    from pdfko.proxy import nothing_to_translate
+
+    # 보낼 필요가 없는 것
+    for s in ("A {v1}B {v2}C {v3}D", "A → B → C", "2023-03-15", "9",
+              "{v1}{v2}", "  ", "x"):
+        assert nothing_to_translate(s) is True, s
+
+    # 반드시 보내야 하는 것 — 여기서 막히면 영어가 그대로 남는다
+    for s in ("No", "Yes", "STOP", "{v1}Tool A", "Goal", "A Tool"):
+        assert nothing_to_translate(s) is False, s
+
+
+def test_the_plain_path_skips_single_letter_bodies_without_crashing():
+    """평문 경로가 실제로 그 항목을 걸러 내고, 세는 칸도 있어야 한다.
+
+    앞 시험은 판정 함수만 봤다. 그러면 `STATS` 에 열쇠가 없어 `KeyError` 가
+    나도 통과한다 — 실제로 그럴 뻔했다. 여기서는 경로를 밟는다.
+    """
+    from fastapi.testclient import TestClient
+    from pdfko import proxy
+
+    body = "A {v1}B {v2}C {v3}D"
+    prompt = f"Now translate the following text:\n\n{body}"
+    r = TestClient(proxy.app).post(
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": prompt}]})
+    assert r.status_code == 200
+    assert r.json()["choices"][0]["message"]["content"] == body
+    assert proxy.STATS["nothing_to_translate"] >= 1
