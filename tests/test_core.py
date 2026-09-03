@@ -1352,3 +1352,24 @@ def test_a_real_untranslated_word_beside_korean_is_still_caught():
     d, p = _label_block("Yes", "최종 추천")
     assert qa.mixed_language_figures(p) == 1, "미번역 낱말을 놓쳤다"
     d.close()
+
+
+def test_the_gap_left_by_a_rejoin_survives_into_a_real_span():
+    """되붙인 뒤 남는 공백을 **내용이 있는 span 안으로** 옮긴다.
+
+    `stand ` 를 걷어내면 그 자리에 `<style id='1'> </style>` 처럼 공백만 든
+    span 이 남는다. babeldoc 은 그런 span 을 렌더링에서 버려서, 결과물에
+    `이해하기MDP` 로 두 항목이 붙어 찍힌다(실측, L03 2쪽).
+
+    공백을 다음 span 의 내용 앞에 붙이면 버려질 자리가 없어진다.
+    """
+    from pdfko.proxy import rejoin_cut_words
+    vocab = {"understand", "mdp"}
+    items = [{"id": 0, "input": "○ Under"},
+             {"id": 1, "input": "<style id='1'>stand </style><style id='3'>MDP</style>"}]
+    out = rejoin_cut_words(items, vocab)
+    assert out[0]["input"] == "○ Understand"
+    assert "> </style>" not in out[1]["input"], f"공백만 든 span 이 남았다: {out[1]['input']!r}"
+    # 일반 공백이 아니라 `\xa0`. babeldoc 은 span 앞머리의 일반 공백을
+    # 잘라낸다 — 내용 있는 span 안으로 옮겨도 마찬가지였다(실측).
+    assert ">\u00a0MDP<" in out[1]["input"], repr(out[1]["input"])

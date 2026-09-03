@@ -558,8 +558,35 @@ def rejoin_cut_words(items: list[dict], vocab) -> list[dict]:
         # 앞 조각의 꼬리를 온전한 낱말로, 뒤 조각의 머리는 걷어낸다.
         m = ta[-1]
         out[i]["input"] = a[:m.start()] + tail + head + a[m.end():]
-        out[i + 1]["input"] = (b[:hb.start()] + b[hb.end():]).lstrip()
+        out[i + 1]["input"] = _tidy_gap((b[:hb.start()] + b[hb.end():]).lstrip())
     return out
+
+
+_EMPTY_SPAN = re.compile(
+    r"^(<style\s+id=['\"][^'\"]*['\"]\s*>)(\s+)(</style>)")
+
+
+def _tidy_gap(text: str) -> str:
+    """머리 낱말을 걷어낸 자리에 남은 **공백만 든 span** 을 정리한다.
+
+    babeldoc 은 내용이 공백뿐인 span 을 렌더링에서 버린다. 그래서 되붙인
+    항목이 앞 항목에 딱 붙어 찍힌다 — 실측(L03 2쪽) `이해하기MDP`.
+
+    그 공백을 **다음 span 의 내용 앞으로** 옮긴다. 버려질 자리가 없어진다.
+    """
+    m = _EMPTY_SPAN.match(text)
+    if not m:
+        return text
+    rest = text[m.end():]
+    nxt = re.match(r"(<style\s+id=['\"][^'\"]*['\"]\s*>)", rest)
+    # **일반 공백이 아니라 `\xa0`** 를 쓴다. babeldoc 은 span 앞머리의 일반
+    # 공백을 잘라낸다 — 내용 있는 span 안으로 옮겨도 마찬가지였다(실측).
+    # 줄바꿈 없는 공백은 트리밍 대상이 아니고, babeldoc 자신의 출력도
+    # 전부 이 문자를 쓴다.
+    gap = "\u00a0" * len(m.group(2))
+    if nxt:                       # 다음 span 의 내용 앞에 붙인다
+        return rest[:nxt.end()] + gap + rest[nxt.end():]
+    return gap + rest             # span 이 더 없으면 그냥 앞에 둔다
 
 
 _EDGE_LEAD = re.compile(r"^\W*", re.U)
