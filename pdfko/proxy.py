@@ -663,6 +663,51 @@ def already_korean(src: str) -> bool:
 _MULTISPACE = re.compile(r"\s{3,}")
 
 
+_SPACE_EM = 0.33          # est_width 가 공백에 매기는 폭
+_PAD_MAX = 15             # 실측: 15칸은 그려지고 21칸은 마침표가 된다
+
+
+def align_columns(src: str, tgt: str) -> str:
+    """열 위치를 글자 수가 아니라 **그려지는 폭**으로 맞춘다.
+
+    원본 `Reasoning       Tool       Control` 은 7칸씩 띄워 세 열을 만든다.
+    모델은 그 7칸을 그대로 지켜 `추론       도구       제어` 를 돌려준다 —
+    지시대로다. 그런데 `Reasoning`(9자)과 `추론`(2자)의 그려지는 폭이 달라서,
+    같은 칸 수를 둬도 열이 왼쪽으로 무너진다. 실측(20쪽):
+
+        원본   Reasoning x=73   Tool x=220   Control x=396
+        번역   추론      x=75   도구 x=148   제어    x=237
+
+    슬라이드에 그려진 화살표는 제자리에 남으므로 열과 어긋나 보인다. 칸 수가
+    아니라 원본이 잡아 둔 폭에 맞춰 채운다.
+
+    확신이 없으면 손대지 않는다. 칸이 없는 줄, 모델이 칸을 잃은 답, 칸 수가
+    다른 답은 그대로 돌려준다 — 열이 조금 좁은 것보다 문장에 공백이 박히는
+    쪽이 훨씬 나쁘다.
+
+    채우는 칸에는 상한이 있다. **넓은 칸은 조판기가 마침표 하나로 바꿔
+    버린다.** 원본의 진짜 간격(21칸)에 맞춰 보니 `도구.제어` 가 나왔다.
+    15칸은 멀쩡히 그려졌다. 그래서 실측으로 안전이 확인된 데까지만 채운다.
+    이 값을 올리려면 다시 재 보고 올려야 한다 — 추측으로 올리면 글자가
+    마침표로 바뀐다.
+    """
+    if not src or not tgt or not _MULTISPACE.search(src):
+        return tgt
+    sc, tc = _MULTISPACE.split(src.strip()), _MULTISPACE.split(tgt.strip())
+    if len(sc) != len(tc) or len(sc) < 2:
+        return tgt
+    gaps = _MULTISPACE.findall(src.strip())
+    if len(gaps) != len(sc) - 1:
+        return tgt
+    out, at = tc[0], est_width(sc[0])
+    for gap, cell_s, cell_t in zip(gaps, sc[1:], tc[1:]):
+        at += len(gap) * _SPACE_EM          # 원본이 잡아 둔 이 열의 시작 자리
+        pad = min(_PAD_MAX, max(2, round((at - est_width(out)) / _SPACE_EM)))
+        out += " " * pad + cell_t
+        at += est_width(cell_s)
+    return out
+
+
 def restore_gaps(src: str, columns) -> str | None:
     """도식의 열 간격을 되살린다. 해당 없으면 None.
 
@@ -679,9 +724,26 @@ def restore_gaps(src: str, columns) -> str | None:
     칸마다 따로 번역할 것 없이 간격만 되돌려 주면 모델이 알아서 칸으로 읽는다.
     열 경계는 원본에만 남아 있으므로 cli 가 곁길로 넘겨준다.
     """
+    return _column_form(src, columns, 0)
+
+
+def true_line(src: str, columns) -> str | None:
+    """원본이 실제로 잡아 둔 칸. 해당 없으면 None.
+
+    `restore_gaps` 가 돌려주는 것은 모델이 견디도록 **좁힌** 것이다. 좁히면
+    행마다 열이 어긋난다 — 원본은 행마다 다른 칸 수로 같은 x 에 열을 세우기
+    때문이다. 정렬은 번역 뒤에 하므로 여기서는 원본 그대로를 쓴다.
+    """
+    return _column_form(src, columns, 1)
+
+
+def _column_form(src: str, columns, which: int) -> str | None:
     if not columns or not src:
         return None
-    return columns.get(re.sub(r"\s+", " ", src).strip())
+    v = columns.get(re.sub(r"\s+", " ", src).strip())
+    if v is None:
+        return None
+    return v[which] if isinstance(v, list) else v     # 예전 한 벌 형식도 읽는다
 
 
 _PLAIN_MARK = re.compile(
@@ -1354,11 +1416,14 @@ async def chat(request: Request):
 
     # 앞뒤 문장부호·공백은 배치 정보다. 경로마다 붙이면 오늘 고친 그 중복
     # 병이 다시 생기므로, 응답을 조립하는 이 한 곳에서만 되돌린다.
-    out_items = [{"id": it.get("id"),
-                  "output": keep_edges(it.get("input", ""),
-                                       results.get(str(it.get("id")),
-                                                   it.get("input", "")))}
-                 for it in items]
+    # 열은 원본이 실제로 잡아 둔 자리에 맞춘다. 모델에 보낸 것은 좁힌
+    # 값이라 그대로 두면 열이 왼쪽으로 무너진 채 남는다.
+    def _aligned(it) -> str:
+        src = it.get("input", "")
+        tgt = keep_edges(src, results.get(str(it.get("id")), src))
+        return align_columns(true_line(src, SOURCE_COLUMNS) or src, tgt)
+
+    out_items = [{"id": it.get("id"), "output": _aligned(it)} for it in items]
     text = json.dumps(out_items, ensure_ascii=False)
     # 문단별로 이미 저장했으므로 배치 단위 저장은 하지 않는다.
     # 실패한 문단은 저장하지 않아, 재실행하면 그것만 다시 시도된다.

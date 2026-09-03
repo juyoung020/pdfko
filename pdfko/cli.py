@@ -155,16 +155,26 @@ def build_columns(src: Path, out: Path) -> int:
                 for ln in b.get("lines", []):
                     t = "".join(sp["text"] for sp in ln["spans"]).rstrip()
                     if _MULTISPACE.search(t.strip()):
-                        # 간격을 **그 줄의 가장 좁은 칸 간격**으로 통일한다.
-                        # 실측(20쪽): 같은 줄에서 7칸은 그대로 그려졌는데
-                        # 21칸은 마침표 하나로 바뀌었다. 다른 줄의 5·9칸도
-                        # 살아남았다. 넓은 간격이 조판을 넘어뜨리는 것이므로,
-                        # 그 줄이 이미 그려낸 크기를 쓴다 — 임의로 정한 값이
-                        # 아니라 그 줄 자신이 증명한 값이다.
+                        # 두 벌을 적는다 — **보낼 것**과 **맞출 것**.
+                        #
+                        # 보낼 것은 간격을 그 줄의 가장 좁은 칸으로 통일한다.
+                        # 넓은 칸을 그대로 보내면 모델이 견디지 못한다.
+                        #
+                        # 맞출 것은 원본 그대로다. 원본은 행마다 **다른 칸
+                        # 수**를 써서 같은 x 에 열을 세운다. 실측(20쪽):
+                        #
+                        #   wrong decision  5칸  → 2열 x=160
+                        #   bad plan       14칸  → 2열 x=161
+                        #   hallucination   8칸  → 2열 x=158
+                        #
+                        # 좁은 쪽으로 통일하면 이 정보가 사라져 열이 행마다
+                        # 어긋난다. 정렬은 번역 뒤에 하므로 모델은 넓은 칸을
+                        # 볼 일이 없다 — 조판기가 못 견디는 것은 프록시의
+                        # 채움 상한이 막는다.
                         body = t.strip()
                         w = min(len(g) for g in _MULTISPACE.findall(body))
-                        cols[re.sub(r"\s+", " ", body)] = _MULTISPACE.sub(
-                            " " * w, body)
+                        cols[re.sub(r"\s+", " ", body)] = [
+                            _MULTISPACE.sub(" " * w, body), body]
     out.write_text(_json.dumps(cols, ensure_ascii=False), encoding="utf-8")
     return len(cols)
 

@@ -1558,3 +1558,100 @@ def test_the_plain_path_skips_single_letter_bodies_without_crashing():
     assert r.status_code == 200
     assert r.json()["choices"][0]["message"]["content"] == body
     assert proxy.STATS["nothing_to_translate"] >= 1
+
+
+# ── 열 위치는 글자 수가 아니라 그려지는 폭으로 맞춘다 ────────────────────
+def test_columns_land_where_the_source_put_them():
+    """칸을 글자 수로 세면 한국어에서 열이 무너진다.
+
+    원본 `Reasoning       Tool       Control` 은 7칸씩 띄워 세 열을 만든다.
+    모델은 그 7칸을 그대로 지켜 `추론       도구       제어` 를 돌려준다 —
+    지시대로다. 그런데 `Reasoning`(9자)과 `추론`(2자)의 **그려지는 폭**이
+    달라서, 같은 7칸을 둬도 열이 왼쪽으로 무너진다.
+
+        원본   Reasoning x=73   Tool x=220   Control x=396
+        번역   추론      x=75   도구 x=148   제어    x=237
+
+    그러면 슬라이드에 그려진 화살표는 제자리에 남아 열과 어긋난다.
+    칸 수가 아니라 **원본이 잡아 둔 폭**에 맞춰 채운다.
+    """
+    from pdfko.proxy import align_columns, est_width
+
+    src = "Reasoning       Tool       Control"
+    tgt = "추론       도구       제어"
+    got = align_columns(src, tgt)
+
+    import re
+    cells_src = re.split(r"  +", src)
+    cells_got = re.split(r"  +", got)
+    assert cells_got == ["추론", "도구", "제어"]      # 글자는 그대로
+
+    # 각 열이 원본이 잡아 둔 자리 근처에서 시작한다
+    def starts(line, cells):
+        out, at = [], 0
+        for c in cells:
+            i = line.index(c, at)
+            out.append(est_width(line[:i]))
+            at = i + len(c)
+        return out
+    for want, have in zip(starts(src, cells_src), starts(got, cells_got)):
+        assert abs(want - have) <= 0.5, (want, have)
+
+
+def test_column_alignment_keeps_its_hands_off_ordinary_lines():
+    """칸이 없는 줄, 칸 수가 안 맞는 답은 건드리지 않는다.
+
+    억지로 맞추면 멀쩡한 문장에 공백이 박힌다. 확신이 없으면 손대지 않는 쪽이
+    항상 낫다 — 열이 조금 좁은 것보다 문장이 깨지는 쪽이 훨씬 나쁘다.
+    """
+    from pdfko.proxy import align_columns
+
+    assert align_columns("a normal line", "평범한 줄") == "평범한 줄"
+    # 모델이 칸을 잃어버린 경우 — 되살릴 근거가 없다
+    assert align_columns("A       B       C", "가 나 다") == "가 나 다"
+    # 칸 수가 다른 경우
+    assert align_columns("A       B       C", "가       나") == "가       나"
+
+
+def test_padding_stops_where_the_typesetter_stops_drawing_spaces():
+    """넓은 칸은 조판기가 마침표 하나로 바꾼다 — 채우는 데 상한이 있다.
+
+    원본 20쪽의 진짜 간격은 7칸과 **21칸**이다. 거기에 맞춰 채워 보니
+    조판된 PDF 에 `도구.제어` 가 찍혔다 — 21칸이 마침표가 됐다. 같은 실행에서
+    15칸은 멀쩡히 그려졌다(`추론` 줄 x=54..213).
+
+    모델이 아니라 **조판기**가 하는 일이라, 번역 뒤에 채워도 피할 수 없다.
+    실측으로 안전이 확인된 데까지만 채운다.
+    """
+    import re
+    from pdfko.proxy import align_columns, _PAD_MAX
+
+    # 아주 넓은 칸을 요구해도 상한을 넘지 않는다
+    wide = "A" + " " * 60 + "B"
+    got = align_columns(wide, "가" + " " * 60 + "나")
+    assert max(len(g) for g in re.findall(r"  +", got)) <= _PAD_MAX
+
+
+def test_columns_stay_lined_up_across_rows():
+    """행마다 칸 수가 달라도 열은 같은 자리에 서야 한다.
+
+    원본 20쪽의 세 행은 **다른 칸 수**로 같은 열을 만든다. 실측한 2열의 x:
+
+        wrong decision   5칸  → x=160
+        bad plan        14칸  → x=161
+        hallucination    8칸  → x=158
+
+    이걸 "그 줄의 가장 좁은 칸"으로 통일하면 정보가 사라져, 번역 뒤 열이
+    행마다 어긋난다(실측 em 7.0 / 5.3 / 9.3). 원본 칸에 맞추면 다시 모인다.
+    """
+    from pdfko.proxy import align_columns, est_width, _MULTISPACE
+
+    rows = [("wrong decision     wrong tool", "잘못된 결정     잘못된 도구"),
+            ("bad plan              bad argument", "나쁜 계획     나쁜 논거"),
+            ("hallucination        timeout", "환각 현상     시간 초과")]
+    starts = []
+    for src, tgt in rows:
+        got = align_columns(src, tgt)
+        second = _MULTISPACE.split(got)[1]
+        starts.append(est_width(got[:got.index(second)]))
+    assert max(starts) - min(starts) <= 1.0, starts
