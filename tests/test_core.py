@@ -1822,3 +1822,70 @@ def test_a_cut_word_fragment_is_left_alone():
     assert is_cut_fragment("Goal", vocab) is False
     assert is_cut_fragment("Age of tools", vocab) is False   # 낱말이 여럿
     assert is_cut_fragment("Age", set()) is False        # 어휘가 없으면 판정 안 함
+
+
+# ── 한 낱말은 한 낱말로 ──────────────────────────────────────────────────
+def test_a_one_word_label_must_not_grow_into_a_phrase():
+    """원문이 한 낱말이면 번역도 한 낱말이어야 한다.
+
+    실측(바닥글). 엔진이 `Copyright 2025. Korea Aerospace University…` 에서
+    `Copyright` 를 떼어 홀로 보냈고, 번역이 `저작권 정보` 로 돌아왔다. 원본
+    조각의 상자보다 넓어서 조판기가 줄을 접었다 — 23쪽 중 10쪽에서
+    `저작권 정` / `보` 로 갈라져 찍혔다.
+
+    폭으로는 못 가른다. `저작권 정보`(1.18배)가 멀쩡한 `스크립트`(1.33배)나
+    `에이전트`(1.60배)보다 **좁다**. 가르는 축은 낱말 수다. 실측한 24개
+    라틴 한-낱말 항목 중 늘어난 것은 넷뿐이었고, 그중 셋(`Copyright`
+    `Input` `Output`)은 같은 캐시에 한-낱말 답도 함께 있었다 — 모델이 낼 수
+    있는 답이다.
+    """
+    from pdfko.proxy import check
+
+    def verdict(src, tgt):
+        return check([{"id": 0, "input": src, "layout_label": "plain text"}],
+                     [{"id": 0, "output": tgt}])
+
+    ok, why = verdict("Copyright", "저작권 정보")
+    assert ok is False and why.kind == "wordy", (ok, why)
+    assert verdict("Input", "입력 데이터")[0] is False
+    assert verdict("Output", "출력 결과")[0] is False
+
+    # 한 낱말로 옮긴 것은 통과한다
+    for src, tgt in (("Copyright", "저작권"), ("Input", "입력"),
+                     ("No", "아니오"), ("Environment", "환경"),
+                     ("Script", "스크립트")):
+        assert verdict(src, tgt)[0] is True, (src, tgt)
+
+    # 원문이 여러 낱말이면 이 규칙은 끼어들지 않는다
+    assert verdict("AI Agent", "AI 에이전트")[0] is True
+    assert verdict("Agent Diagram", "에이전트 다이어그램")[0] is True
+
+
+def test_the_authors_own_korean_must_survive():
+    """원문에 이미 있는 한국어는 한 글자도 바꾸지 않는다.
+
+    강의 자료는 영어와 한국어가 한 줄에 섞여 온다. 영어를 옮기려면 보내야
+    하는데, 보내면 모델이 한국어까지 다시 쓴다. 실측 5건:
+
+        '…Agent가 완성된다'        → '…에이전트가 생성된다'
+        'Flexibility…가 높아지고,'  → '유연성과 적응력이 향상된다,'
+        '…구분하여야 한다'          → '…구분해야 한다'
+
+    둘째 것이 특히 나쁘다. `높아지고,` 는 다음 항목으로 이어지는 절인데
+    `향상된다,` 로 끝맺어 버려 문장이 끊긴다.
+    """
+    from pdfko.proxy import check
+
+    def verdict(src, tgt):
+        return check([{"id": 0, "input": src, "layout_label": "plain text"}],
+                     [{"id": 0, "output": tgt}])
+
+    ok, why = verdict("{v1}Stop condition으로 Agent가 완성된다",
+                      "{v1}정지 조건에 따라 에이전트가 생성된다")
+    assert ok is False and why.kind == "korean", (ok, why)
+
+    # 원문의 한국어를 그대로 둔 번역은 통과한다
+    assert verdict("{v1}Stop condition으로 Agent가 완성된다",
+                   "{v1}정지 조건으로 에이전트가 완성된다")[0] is True
+    # 한국어가 없던 문단은 이 규칙과 무관하다
+    assert verdict("Agent Loop", "에이전트 반복")[0] is True

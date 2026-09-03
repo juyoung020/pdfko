@@ -505,6 +505,47 @@ def has_prose(src: str) -> bool:
     return len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 4)
 
 
+_KOREAN_RUN = re.compile(r"[가-힣]+")
+
+
+def grew_into_a_phrase(src: str, tgt: str) -> bool:
+    """원문이 한 낱말인데 번역이 여러 낱말이 됐는가.
+
+    실측(바닥글). 엔진이 `Copyright` 를 떼어 홀로 보냈고 `저작권 정보` 가
+    돌아왔다. 원본 조각의 상자보다 넓어 조판기가 줄을 접었고, 23쪽 중
+    10쪽에서 `저작권 정` / `보` 로 갈라져 찍혔다.
+
+    폭으로는 못 가른다 — `저작권 정보`(1.18배)가 멀쩡한 `스크립트`(1.33배)
+    보다 좁다. 가르는 축은 낱말 수다. 라틴 한-낱말 항목 24개 중 늘어난 것은
+    넷뿐이었고, 그중 셋은 같은 캐시에 한-낱말 답도 함께 있었다.
+    """
+    a = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or "")).strip()
+    b = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", tgt or "")).strip()
+    return bool(_WORDISH.fullmatch(a)) and len(b.split()) > 1
+
+
+def rewrote_the_korean(src: str, tgt: str) -> str | None:
+    """원문에 있던 한국어가 사라졌으면 그 낱말을, 아니면 None.
+
+    강의 자료는 한 줄에 영어와 한국어가 섞여 온다. 영어를 옮기려면 보내야
+    하는데, 보내면 모델이 한국어까지 다시 쓴다. 실측 5건:
+
+        '…Agent가 완성된다'        → '…에이전트가 생성된다'
+        'Flexibility…가 높아지고,'  → '유연성과 적응력이 향상된다,'
+
+    둘째 것이 특히 나쁘다. `높아지고,` 는 다음 항목으로 이어지는 절인데
+    `향상된다,` 로 끝맺어 버려 문장이 끊긴다.
+
+    두 글자 이상인 덩어리만 본다. 조사 한 글자(`가` `를`)는 앞 낱말이
+    바뀌면 같이 바뀌는 것이 옳다.
+    """
+    body = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or ""))
+    for w in _KOREAN_RUN.findall(body):
+        if len(w) >= 2 and w not in (tgt or ""):
+            return w
+    return None
+
+
 def is_echo(src: str, tgt: str) -> bool:
     """번역할 산문이 있었는데 한글이 없으면 반향이다. **판정은 여기서만.**
 
@@ -936,6 +977,14 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         if leftover_english(tgt):
             return False, Reason("english", f"id {iid} 영어 잔류")
 
+        # 원문에 있던 한국어를 다시 쓰면 안 된다. 글쓴이의 문장이다.
+        if (w := rewrote_the_korean(src, tgt)):
+            return False, Reason("korean", f"id {iid} 원문의 '{w}' 가 사라짐")
+
+        # 한 낱말짜리 라벨에 설명을 덧붙이면 상자를 넘는다.
+        if grew_into_a_phrase(src, tgt):
+            return False, Reason("wordy", f"id {iid} 한 낱말이 여러 낱말이 됨")
+
         # 길이 폭주. 짧은 라벨과 수식은 면제한다.
         if too_wide(src, tgt):
             ratio = est_width(tgt) / est_width(src)
@@ -1021,6 +1070,36 @@ def repair_hint(failed: list[tuple[dict, str]], out: list | None) -> str:
               "Translate ONLY the words present. Do not complete the sentence, "
               "do not add information, do not restate a clause. Keep it at most "
               f"{WIDTH_MAX:.1f}x the source length.")
+
+    # 글쓴이의 한국어를 다시 쓴 경우. 어느 낱말이 사라졌는지 그대로 짚어
+    # 준다 — "원문을 지켜라" 라고만 하면 모델이 어디를 말하는지 못 찾는다.
+    if "korean" in kinds:
+        gone = []
+        for it in items:
+            iid = str(it.get("id"))
+            w = rewrote_the_korean(it.get("input", ""),
+                                   item_output(by_id.get(iid)))
+            if w:
+                gone.append(f'id {iid}: you changed "{w}"')
+        return ("Some of these items ALREADY contain Korean written by the "
+                "author.\n" + "\n".join(gone)
+                + "\nTranslate ONLY the English words. Copy every Korean word "
+                  "character for character, including its ending — do not "
+                  "reword it, do not change 완성 to 생성, do not turn a "
+                  "continuing clause (…고,) into a finished sentence.")
+
+    # 한 낱말짜리 라벨에 설명을 덧붙인 경우.
+    if "wordy" in kinds:
+        grew = [f'id {iid}: "{it.get("input", "")}" → '
+                f'"{item_output(by_id.get(iid))}"'
+                for it in items
+                if (iid := str(it.get("id")))
+                and grew_into_a_phrase(it.get("input", ""),
+                                       item_output(by_id.get(iid)))]
+        return ("The source of these items is a SINGLE word — a label that "
+                "must fit a narrow box.\n" + "\n".join(grew)
+                + "\nReply with a SINGLE Korean word. Do not add an "
+                  "explanatory noun (Copyright is 저작권, not 저작권 정보).")
 
     # 반쪽 번역. 남은 문장을 그대로 인용해 준다 — "영어가 남았다" 라고만 하면
     # 모델이 어디를 말하는지 못 찾고 같은 출력을 되돌려준다.
