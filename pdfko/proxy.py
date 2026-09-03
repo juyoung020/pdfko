@@ -467,6 +467,21 @@ def nothing_to_translate(src: str) -> bool:
     return not any(len(w) >= 2 for w in _WORDISH.findall(t))
 
 
+def prose_hangul_ratio(text: str) -> float:
+    """본문만 보고 한글 비율을 잰다. 서식 태그·자리표시자는 글자가 아니다.
+
+    실측(16쪽). 모델이 정확히 옮겨 줬는데도 거부됐다:
+
+        보낸 것  "<style id='1'>Low </style><style id='3'>High</style>"
+        받은 것  "<style id='1'>낮음</style><style id='3'>높음</style>"
+        판정     hangul 0.14  → 반향으로 보고 버림
+
+    `style`·`id` 의 라틴 글자가 한글 4자를 눌렀다. 짧은 라벨일수록 태그가
+    본문보다 길어서, 제대로 옮길수록 더 확실히 버려진다.
+    """
+    return hangul_ratio(PLACEHOLDER_RE.sub("", STYLE_RE.sub("", text or "")))
+
+
 def has_prose(src: str) -> bool:
     """번역할 산문이 있는가. **이 판단은 여기서만 내린다.**
 
@@ -496,7 +511,7 @@ def is_echo(src: str, tgt: str) -> bool:
     서로 다른 문턱을 썼다. 같은 질문에 두 가지 답을 가진 셈이라, 한쪽을
     고쳐도 다른 쪽이 옛 판단을 계속했다.
     """
-    return has_prose(src) and hangul_ratio(tgt) < 0.15
+    return has_prose(src) and prose_hangul_ratio(tgt) < 0.15
 
 
 def too_wide(src: str, tgt: str) -> bool:
@@ -665,6 +680,9 @@ _MULTISPACE = re.compile(r"\s{3,}")
 
 _SPACE_EM = 0.33          # est_width 가 공백에 매기는 폭
 _PAD_MAX = 15             # 실측: 15칸은 그려지고 21칸은 마침표가 된다
+# 서식 태그 한 벌이 감싼 본문. 태그 하나가 곧 한 칸인 줄이 있다.
+_STYLE_CELL = re.compile(
+    r"<style\s+id=['\"][^'\"]*['\"]\s*>(.*?)</style>", re.S)
 
 
 def align_columns(src: str, tgt: str) -> str:
@@ -693,19 +711,51 @@ def align_columns(src: str, tgt: str) -> str:
     """
     if not src or not tgt or not _MULTISPACE.search(src):
         return tgt
-    sc, tc = _MULTISPACE.split(src.strip()), _MULTISPACE.split(tgt.strip())
+    # 서식 태그는 폭이 없다. 길이를 보존하며 가려 두면, 잰 자리를 그대로
+    # 태그가 붙은 원래 문자열에 되돌릴 수 있다 — 태그를 버리면 원본의 색이
+    # 사라진다.
+    bare = STYLE_RE.sub(lambda m: "\x00" * len(m.group()), tgt)
+    sc = _MULTISPACE.split(src.strip())
+    tc = [c for c in _MULTISPACE.split(bare.replace("\x00", "").strip()) if c]
+    if len(tc) != len(sc):
+        # 공백으로 못 가르면 태그 경계로 가른다. 실측(16쪽)에서 모델은
+        # 칸을 떨어뜨린 채 태그만 지켜 돌려줬다:
+        #   "<style id='1'>낮음</style><style id='3'>높음</style>"
+        # 태그 하나가 곧 한 칸이다.
+        grouped = [g.strip() for g in _STYLE_CELL.findall(tgt) if g.strip()]
+        if len(grouped) == len(sc):
+            tc = grouped
     if len(sc) != len(tc) or len(sc) < 2:
         return tgt
     gaps = _MULTISPACE.findall(src.strip())
     if len(gaps) != len(sc) - 1:
         return tgt
-    out, at = tc[0], est_width(sc[0])
+
+    # 채울 칸 수를 먼저 다 센다. 실제로 끼워 넣는 것은 그 다음이다.
+    pads, laid, at = [], tc[0], est_width(sc[0])
     for gap, cell_s, cell_t in zip(gaps, sc[1:], tc[1:]):
         at += len(gap) * _SPACE_EM          # 원본이 잡아 둔 이 열의 시작 자리
-        pad = min(_PAD_MAX, max(2, round((at - est_width(out)) / _SPACE_EM)))
-        out += " " * pad + cell_t
+        pad = min(_PAD_MAX, max(2, round((at - est_width(laid)) / _SPACE_EM)))
+        pads.append(pad)
+        laid += " " * pad + cell_t
         at += est_width(cell_s)
-    return out
+
+    # 태그가 없으면 잰 그대로가 답이다.
+    if "\x00" not in bare:
+        return laid
+
+    # 태그가 있으면 **칸 사이에만** 끼워 넣는다. 각 칸의 끝을 태그를 가린
+    # 문자열에서 찾고, 그 자리에 해당하는 원래 문자열의 위치에 넣는다.
+    outp, at2 = [], 0
+    for pad, cell in zip(pads, tc[:-1]):
+        i = bare.index(cell, at2) + len(cell)
+        j = i
+        while j < len(bare) and bare[j] in " \t":
+            j += 1                          # 원래 있던 공백은 걷어낸다
+        outp.append(tgt[at2:i] + " " * pad)
+        at2 = j
+    outp.append(tgt[at2:])
+    return "".join(outp)
 
 
 def restore_gaps(src: str, columns) -> str | None:
@@ -724,6 +774,9 @@ def restore_gaps(src: str, columns) -> str | None:
     칸마다 따로 번역할 것 없이 간격만 되돌려 주면 모델이 알아서 칸으로 읽는다.
     열 경계는 원본에만 남아 있으므로 cli 가 곁길로 넘겨준다.
     """
+    # 서식 태그가 붙어 온 줄은 **넓히지 않는다.** 태그 안쪽에 칸을 넣었더니
+    # 모델이 그 공백을 떨어뜨려 `낮음높음` 으로 붙어 버렸다(실측 16쪽).
+    # 그런 줄은 태그 자체가 이미 칸을 가르므로, 정렬할 때 태그 경계로 잡는다.
     return _column_form(src, columns, 0)
 
 
@@ -734,7 +787,9 @@ def true_line(src: str, columns) -> str | None:
     행마다 열이 어긋난다 — 원본은 행마다 다른 칸 수로 같은 x 에 열을 세우기
     때문이다. 정렬은 번역 뒤에 하므로 여기서는 원본 그대로를 쓴다.
     """
-    return _column_form(src, columns, 1)
+    v = _column_form(src, columns, 1)
+    return v if v is not None else _column_form(
+        STYLE_RE.sub("", src or ""), columns, 1)
 
 
 def _column_form(src: str, columns, which: int) -> str | None:
@@ -848,7 +903,8 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         # 번역할 산문이 있었는데 한글이 없으면 반향이다.
         # 산문이 없으면(URL·수식·숫자뿐) 원문 그대로가 정답이므로 넘어간다.
         if is_echo(src, tgt):
-            return False, Reason("hangul", f"id {iid} hangul {hangul_ratio(tgt):.2f}")
+            return False, Reason("hangul",
+                             f"id {iid} hangul {prose_hangul_ratio(tgt):.2f}")
 
         # 반쪽 번역. 한글 비율만 보면 통과한다 — 80%가 한국어인 문단에 영어
         # 한 문장이 남아도 0.15 바닥을 넘기 때문이다. 실측으로 이 책 3660문단

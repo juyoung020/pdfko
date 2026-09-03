@@ -21,6 +21,9 @@ from .repair import looks_damaged
 _HANGUL = re.compile(r"[가-힣]")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
 _MULTISPACE = re.compile(r"\s{3,}")
+# est_width 가 공백에 매기는 폭. proxy 와 같은 값을 써야 채운 칸이
+# 원본과 같은 자리에 선다.
+_SPACE_EM = 0.33
 
 
 def _c(s: str, code: str) -> str:
@@ -141,14 +144,25 @@ def build_vocab(src: Path, out: Path) -> int:
 def build_columns(src: Path, out: Path) -> int:
     """도식의 열 간격을 적어 둔다. → 줄 수
 
-    원본에서 열이 **여러 칸 공백**으로만 나뉜 줄을 모은다. babeldoc 은 보내기
-    전에 그 공백을 하나로 줄여서, 번역기가 세 칸을 한 문장으로 읽어 버린다.
-    공백을 뭉갠 형태를 열쇠로, 원래 간격이 살아 있는 줄을 값으로 넣는다.
+    원본에서 열이 나뉘는 방식은 두 가지다.
+
+      ① **여러 칸 공백**으로만 나뉜 한 줄
+      ② 같은 baseline 위에 **멀리 떨어진 별개 조각**
+
+    babeldoc 은 둘 다 한 덩어리로 만들어 보낸다 — ①은 공백을 하나로 줄이고,
+    ②는 조각을 이어 붙인다. 그러면 번역기가 세 칸을 한 문장으로 읽는다.
+    실측(16쪽): 눈금 양 끝의 `Low`(x=34)와 `High`(x=311)가 `낮음 높음` 으로
+    붙어 눈금이라는 뜻이 사라졌다.
+
+    공백을 뭉갠 형태를 열쇠로, 값은 두 벌을 넣는다 — 보낼 것과 맞출 것.
+
+    여기 적힌 줄이 늘어도 위험하지 않다. babeldoc 이 **정확히 그 문자열을 한
+    항목으로** 보낼 때만 쓰이고, 안 맞으면 아무 일도 일어나지 않는다.
     """
     import json as _json
 
     import pymupdf
-    cols: dict[str, str] = {}
+    cols: dict[str, list[str]] = {}
     with pymupdf.open(src) as d:
         for pg in d:
             for b in pg.get_text("dict")["blocks"]:
@@ -175,6 +189,41 @@ def build_columns(src: Path, out: Path) -> int:
                         w = min(len(g) for g in _MULTISPACE.findall(body))
                         cols[re.sub(r"\s+", " ", body)] = [
                             _MULTISPACE.sub(" " * w, body), body]
+    with pymupdf.open(src) as d:
+        for pg in d:
+            band: dict[int, list[tuple[float, float, float, str]]] = {}
+            for b in pg.get_text("dict")["blocks"]:
+                for ln in b.get("lines", []):
+                    t = "".join(sp["text"] for sp in ln["spans"]).strip()
+                    if not t or _MULTISPACE.search(t):
+                        continue          # ①에서 이미 다뤘다
+                    size = max((sp["size"] for sp in ln["spans"]), default=0) or 1
+                    band.setdefault(round(ln["bbox"][1]), []).append(
+                        (ln["bbox"][0], ln["bbox"][2], size, t))
+            for parts in band.values():
+                if len(parts) < 2:
+                    continue
+                parts.sort()
+                gaps = [b[0] - a[1] for a, b in zip(parts, parts[1:])]
+                # 줄 하나보다 넓게 벌어졌으면 낱말 사이가 아니라 열 사이다.
+                # 글꼴 크기에 매이지 않는 기준이라 문서가 달라져도 흔들리지
+                # 않는다.
+                if any(g < parts[0][2] for g in gaps):
+                    continue
+                key = " ".join(p[3] for p in parts)
+                if key in cols:
+                    continue
+                send = true = parts[0][3]
+                for gap, part in zip(gaps, parts[1:]):
+                    # 맞출 것은 원본 간격 그대로 — 프록시가 조판기의 한계
+                    # 안에서 잘라 쓴다.
+                    n = max(1, round(gap / (part[2] * _SPACE_EM)))
+                    # 보낼 것은 5칸. 우리 검출기는 3칸부터 열로 보는데,
+                    # 모델이 한두 칸을 흘려도 경계가 남도록 여유를 둔다.
+                    send += " " * min(n, 5) + part[3]
+                    true += " " * n + part[3]
+                cols[key] = [send, true]
+
     out.write_text(_json.dumps(cols, ensure_ascii=False), encoding="utf-8")
     return len(cols)
 

@@ -78,9 +78,16 @@ _VOLATILE = {"--openai-base-url", "--working-dir", "--output", "--pages",
 
 
 def settings_stamp(cmd: list[str]) -> str:
-    """엔진 호출 방식의 지문. 이게 바뀌면 끝난 구간도 다시 번역한다."""
+    """번역 방식의 지문. 이게 바뀌면 끝난 구간도 다시 번역한다.
+
+    pdfko 가 번역을 바꾸는 길은 둘이다 — babeldoc 에 넘기는 인자와, 프록시의
+    검증·수리 규칙. 인자만 보면 규칙을 고쳐 놓고 다시 돌렸을 때 옛 결과가
+    조용히 그대로 나온다. 규칙 쪽은 프록시가 자기 캐시를 무효화하려고 이미
+    지문을 들고 있으니 그것을 같이 쓴다.
+    """
     import hashlib
-    keep, skip = [], False
+    from . import proxy
+    keep, skip = [proxy._rules_fingerprint()], False
     for a in cmd:
         if skip:
             skip = False

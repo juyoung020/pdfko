@@ -1655,3 +1655,125 @@ def test_columns_stay_lined_up_across_rows():
         second = _MULTISPACE.split(got)[1]
         starts.append(est_width(got[:got.index(second)]))
     assert max(starts) - min(starts) <= 1.0, starts
+
+
+def test_pieces_far_apart_on_one_baseline_are_columns_too():
+    """열이 '여러 칸 공백'으로만 오지는 않는다.
+
+    실측(16쪽). 자율성 눈금의 양 끝 `Low` 와 `High` 는 같은 baseline 에
+    있으면서 242pt 떨어진 **별개 조각**이다(글꼴 18pt — 줄 높이의 13배).
+    열 지도가 여러 칸 공백만 보고 있어서 이 줄은 아예 안 잡혔고, 번역본에서
+    `낮음 높음` 으로 붙어 눈금이라는 뜻이 사라졌다.
+
+    가르는 기준은 줄 높이다. 줄 하나보다 넓게 벌어진 가로 간격은 낱말
+    사이가 아니라 열 사이다 — 글꼴 크기에 매이지 않는 기준이라 문서가
+    달라져도 흔들리지 않는다.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import pymupdf
+    from pdfko.cli import build_columns
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "a.pdf"
+        doc = pymupdf.open()
+        pg = doc.new_page(width=600, height=200)
+        pg.insert_text((34, 100), "Low", fontsize=18)
+        pg.insert_text((311, 100), "High", fontsize=18)
+        pg.insert_text((34, 140), "Script", fontsize=18)      # 혼자인 줄은 아니다
+        doc.save(src); doc.close()
+
+        out = Path(d) / "columns.json"
+        build_columns(src, out)
+        cols = json.loads(out.read_text(encoding="utf-8"))
+
+        assert "Low High" in cols, cols
+        send, want = cols["Low High"]
+        assert "   " in send                      # 모델이 열로 읽을 만큼은 띄운다
+        assert want.count(" ") > send.count(" ")  # 맞출 것은 원본 간격만큼 넓다
+        assert "Script" not in " ".join(cols)     # 혼자 있는 줄은 건드리지 않는다
+
+
+def test_alignment_survives_style_tags():
+    """서식 태그가 붙어 와도 열은 맞춘다.
+
+    실측(16쪽)에서 그 줄은 이렇게 도착했다:
+
+        "<style id='1'>Low </style><style id='3'>High</style>"
+
+    태그를 무시하고 글자만 보면 열쇠가 맞고, 채운 칸은 두 칸 **사이**에
+    들어가야 한다. 태그를 버리면 원본의 색이 사라진다.
+    """
+    import re
+
+    from pdfko.proxy import align_columns, restore_gaps, true_line
+
+    cols = {"Low High": ["Low     High", "Low" + " " * 41 + "High"]}
+    src = "<style id='1'>Low </style><style id='3'>High</style>"
+
+    # ① 보낼 때는 **건드리지 않는다.** 태그 안쪽에 칸을 넣었더니 모델이 그
+    #    공백을 떨어뜨려 `낮음높음` 으로 붙었다.
+    assert restore_gaps(src, cols) is None
+
+    # ② 모델이 칸을 지키든 떨어뜨리든, 태그 하나가 곧 한 칸이다.
+    for got in ("<style id='1'>낮음 </style><style id='3'>높음</style>",
+                "<style id='1'>낮음</style><style id='3'>높음</style>"):
+        out = align_columns(true_line(src, cols), got)
+        assert out.count("<style") == 2 and out.count("</style>") == 2
+        assert "낮음" in out and "높음" in out
+        assert max(len(g) for g in re.findall(r"  +", out)) > 5
+
+
+def test_markup_letters_do_not_count_against_the_translation():
+    """서식 태그의 글자를 세면 짧은 라벨이 멀쩡한 번역을 거부당한다.
+
+    실측(16쪽). 모델이 정확히 옮겨 줬는데도 거부됐다:
+
+        보낸 것  "<style id='1'>Low </style><style id='3'>High</style>"
+        받은 것  "<style id='1'>낮음</style><style id='3'>높음</style>"
+        판정     id 1 hangul 0.14  → 반향으로 보고 버림
+
+    `style`·`id` 의 라틴 글자가 한글 4자를 눌러 비율이 0.14 로 떨어진 것이다.
+    태그는 서식이지 본문이 아니다. 자리표시자도 마찬가지다.
+    """
+    from pdfko.proxy import is_echo, prose_hangul_ratio
+
+    src = "<style id='1'>Low </style><style id='3'>High</style>"
+    good = "<style id='1'>낮음</style><style id='3'>높음</style>"
+    assert prose_hangul_ratio(good) == 1.0
+    assert is_echo(src, good) is False        # 멀쩡한 번역을 버리지 않는다
+
+    # 진짜 반향은 여전히 걸러진다
+    assert is_echo(src, src) is True
+    assert is_echo("{v1}Tool A", "{v1}Tool A") is True
+
+
+def test_the_chunk_stamp_covers_proxy_rules_too():
+    """엔진 인자만 보면 절반이다 — 검증 규칙이 바뀌어도 다시 번역해야 한다.
+
+    구간 표식은 "무슨 설정으로 만든 것인가"를 적어 둔다. 그런데 pdfko 가
+    번역을 바꾸는 방법은 두 가지다:
+
+      · babeldoc 에 넘기는 인자   (줄 분리, 글꼴 …)
+      · 프록시의 검증·수리 규칙   (반향 판정, 열 정렬 …)
+
+    인자만 지문에 넣으면 규칙을 고쳐 놓고 다시 돌려도 옛 결과가 조용히
+    그대로 나온다 — 이 함정을 이미 한 번 겪었다.
+    """
+    from pathlib import Path
+    from pdfko import proxy, runner
+
+    cmd = runner.babeldoc_cmd(Path("/x/a.pdf"), Path("/tmp/w"), "1-4",
+                              Path("/tmp/o"), model="m", proxy_port=1,
+                              prompt_file=None)
+    before = runner.settings_stamp(cmd)
+
+    real = proxy._rules_fingerprint
+    try:
+        proxy._rules_fingerprint = lambda *a, **k: "규칙이-바뀌었다"
+        assert runner.settings_stamp(cmd) != before
+    finally:
+        proxy._rules_fingerprint = real
+    assert runner.settings_stamp(cmd) == before      # 되돌리면 같아진다
