@@ -1,0 +1,159 @@
+- generic [ref=f3e1]:
+  - generic [ref=f3e3]:
+    - banner [ref=f3e4]:
+      - generic [ref=f3e5]:
+        - generic [ref=f3e6]:
+          - img "file-icon" [ref=f3e7]
+          - generic [ref=f3e8]: AI-Agent-00.pdf
+        - generic [ref=f3e10]:
+          - button [ref=f3e11] [cursor=pointer]
+          - generic [ref=f3e15]:
+            - textbox [ref=f3e16]: "1"
+            - group [aria-hidden]
+          - paragraph [ref=f3e17]: / 4 페이지
+          - button [ref=f3e18] [cursor=pointer]
+        - generic [ref=f3e21]:
+          - generic "언어 선택" [ref=f3e22]:
+            - generic [ref=f3e24]:
+              - combobox "Without label" [ref=f3e25] [cursor=pointer]:
+                - generic [ref=f3e26]:
+                  - img "translation" [ref=f3e27]
+                  - text: 원문 언어
+              - textbox [aria-hidden]: original
+              - group [aria-hidden]
+          - button "파일 다운로드" [active] [ref=f3e28] [cursor=pointer]
+    - generic [ref=f3e32]:
+      - generic [ref=f3e34]:
+        - generic [ref=f3e35]: 페이지
+        - button "닫기" [ref=f3e37] [cursor=pointer]
+        - generic [ref=f3e40]:
+          - generic [ref=f3e41] [cursor=pointer]:
+            - img "page-1" [ref=f3e43]
+            - generic [ref=f3e44]: "1"
+          - generic [ref=f3e45] [cursor=pointer]:
+            - img "page-2" [ref=f3e47]
+            - generic [ref=f3e49]: "2"
+          - generic [ref=f3e50] [cursor=pointer]:
+            - img "page-3" [ref=f3e52]
+            - generic [ref=f3e54]: "3"
+          - generic [ref=f3e55] [cursor=pointer]:
+            - img "page-4" [ref=f3e57]
+            - generic [ref=f3e59]: "4"
+      - generic [ref=f3e63]:
+        - generic [ref=f3e65]:
+          - img "페이지 1"
+          - generic [ref=f3e67]:
+            - generic [ref=f3e68]: Copyright 2025. Korea Aerospace University. All rights reserved.
+            - generic [ref=f3e69]: AI Agent
+            - generic [ref=f3e70]: 강의개요
+        - generic [ref=f3e72]:
+          - img "페이지 2"
+          - generic [ref=f3e74]:
+            - generic [ref=f3e75]: Copyright 2025. Korea Aerospace University. All rights reserved.
+            - generic [ref=f3e76]: AI Agent
+            - generic [ref=f3e77]: ▪
+            - generic [ref=f3e78]: 학습목표
+            - generic [ref=f3e79]: •
+            - generic [ref=f3e80]: AI Agent가무엇인지잘알고
+            - generic [ref=f3e81]: •
+            - generic [ref=f3e82]: Framework
+            - generic [ref=f3e83]: 도움없이직접구현할수있으며
+            - generic [ref=f3e84]: •
+            - generic [ref=f3e85]: AI Agent 시스템의한계와발전방향을잘설명할수있다
+            - generic [ref=f3e86]: •
+            - generic [ref=f3e87]: 실전문제에도전해서의미있는Agent System을설계/구현/검증/평가/운영할수있다
+            - generic [ref=f3e88]: ▪
+            - generic [ref=f3e89]: 이강의에서다루지않는것들
+            - generic [ref=f3e90]: •
+            - generic [ref=f3e91]: AI Models
+            - generic [ref=f3e92]: –
+            - generic [ref=f3e93]: LLM(Large Language Model), VLM(Vision Language Model), Embedding Model
+            - generic [ref=f3e94]: •
+            - generic [ref=f3e95]: 특정framework –
+            - generic [ref=f3e96]: LangGraph
+            - generic [ref=f3e97]: 등소개하고이용하지만깊게다루지않는다.
+        - generic [ref=f3e99]:
+          - img "페이지 3"
+          - generic [ref=f3e101]:
+            - generic [ref=f3e102]: Copyright 2025. Korea Aerospace University. All rights reserved.
+            - generic [ref=f3e103]: AI Agent
+            - generic [ref=f3e104]: •
+            - generic [ref=f3e105]: 시험–
+            - generic [ref=f3e106]: 30%
+            - generic [ref=f3e107]: •
+            - generic [ref=f3e108]: 수시–
+            - generic [ref=f3e109]: 15%
+            - generic [ref=f3e110]: •
+            - generic [ref=f3e111]: 출석–
+            - generic [ref=f3e112]: 5%
+            - generic [ref=f3e113]: •
+            - generic [ref=f3e114]: Project 1 –
+            - generic [ref=f3e115]: 20%
+            - generic [ref=f3e116]: •
+            - generic [ref=f3e117]: Project 2 –
+            - generic [ref=f3e118]: 30%
+            - generic [ref=f3e119]: •
+            - generic [ref=f3e120]: "agent.kau.ac.kr : 강의사이트"
+            - generic [ref=f3e121]: •
+            - generic [ref=f3e122]: "AI 모델: Qwen 3.5 –"
+            - generic [ref=f3e123]: 9B
+            - generic [ref=f3e124]: •
+            - generic [ref=f3e125]: 실험은어디에서하든자유–
+            - generic [ref=f3e126]: 평가는위사이트API-Key 받아야할수있음(조교도움)
+        - generic [ref=f3e128]:
+          - img "페이지 4"
+          - generic [ref=f3e130]:
+            - generic [ref=f3e131]: Copyright 2025. Korea Aerospace University. All rights reserved.
+            - generic [ref=f3e132]: 주차
+            - generic [ref=f3e133]: 핵심주제
+            - generic [ref=f3e134]: 목표
+            - generic [ref=f3e135]: 1주
+            - generic [ref=f3e136]: Agent vs Workflow
+            - generic [ref=f3e137]: 언제agent가필요한지판단
+            - generic [ref=f3e138]: 2주
+            - generic [ref=f3e139]: Agent Loop & Tool Calling
+            - generic [ref=f3e140]: raw API로실행가능한agent loop 구현
+            - generic [ref=f3e141]: 3주
+            - generic [ref=f3e142]: Context Engineering & ReAct
+            - generic [ref=f3e143]: instruction·role·tool description으로행동제어
+            - generic [ref=f3e144]: 4주
+            - generic [ref=f3e145]: State & Memory
+            - generic [ref=f3e146]: 상태와기억을어떻게유지·압축·망각할지설계
+            - generic [ref=f3e147]: 5주
+            - generic [ref=f3e148]: Knowledge & Retrieval
+            - generic [ref=f3e149]: 외부지식을retrieval tool로획득하고검증
+            - generic [ref=f3e150]: 6주
+            - generic [ref=f3e151]: Planning & Reasoning
+            - generic [ref=f3e152]: workflow·router·Plan-and-Execute·reflection 비교
+            - generic [ref=f3e153]: 7주
+            - generic [ref=f3e154]: Agent Framework
+            - generic [ref=f3e155]: raw
+            - generic [ref=f3e156]: loop와framework
+            - generic [ref=f3e157]: 구현비교, MCP 소개
+            - generic [ref=f3e158]: 8주
+            - generic [ref=f3e159]: Evaluation
+            - generic [ref=f3e160]: baseline·golden set·metric·grader 설계
+            - generic [ref=f3e161]: 9주
+            - generic [ref=f3e162]: Failure
+            - generic [ref=f3e163]: Diagnosis
+            - generic [ref=f3e164]: trace를보고agent 실패원인진단
+            - generic [ref=f3e165]: 10주
+            - generic [ref=f3e166]: Security
+            - generic [ref=f3e167]: "& Safety"
+            - generic [ref=f3e168]: prompt injection·권한·sandbox·approval
+            - generic [ref=f3e169]: 11주
+            - generic [ref=f3e170]: Multi-Agent
+            - generic [ref=f3e171]: manager·agent-as-tool·handoff와조율비용
+            - generic [ref=f3e172]: 12주
+            - generic [ref=f3e173]: Production / Durable Agent
+            - generic [ref=f3e174]: checkpoint·concurrency·복구·비용·versioning
+            - generic [ref=f3e175]: 13주
+            - generic [ref=f3e176]: "Project: Build & Red-Team"
+            - generic [ref=f3e177]: prototype 공격·ablation·failure 수집
+            - generic [ref=f3e178]: 14주
+            - generic [ref=f3e179]: "Project: Evaluation & Freeze"
+            - generic [ref=f3e180]: 결과해석·재현성확인·demo freeze
+            - generic [ref=f3e181]: 15주
+            - generic [ref=f3e182]: Final Defense
+            - generic [ref=f3e183]: demo·결과/실패분석·개인구두방어
+  - tooltip "파일 다운로드" [ref=f3e184]

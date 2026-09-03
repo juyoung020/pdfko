@@ -1,0 +1,190 @@
+- generic [active] [ref=f3e1]:
+  - status
+  - generic [ref=f3e2]:
+    - link "메인 콘텐츠로 건너뛰기" [ref=f3e3] [cursor=pointer]:
+      - /url: "#maincontent"
+    - generic [ref=f3e4]:
+      - banner [ref=f3e5]:
+        - button [ref=f3e8] [cursor=pointer]
+        - generic [ref=f3e14]:
+          - button "현재 페이지의 주요 기능 투어를 시작합니다." [ref=f3e15] [cursor=pointer]
+          - button "81" [ref=f3e18] [cursor=pointer]
+      - generic [ref=f3e23]:
+        - text: 
+        - region "내용" [ref=f3e24]:
+          - main [ref=f3e25]:
+            - generic [ref=f3e26]:
+              - generic [ref=f3e28]:
+                - heading "AI Agent(0536) (00)" [level=3] [ref=f3e29]
+                - generic [ref=f3e30]:
+                  - generic [ref=f3e31]:
+                    - generic [ref=f3e32]: 최
+                    - text: 최영식 교수님
+                    - button [ref=f3e33] [cursor=pointer]
+                  - button "수업조교" [ref=f3e38] [cursor=pointer]
+              - generic [ref=f3e42]:
+                - heading "섹션 개요" [level=2] [ref=f3e43]
+                - list [ref=f3e44]:
+                  - listitem [ref=f3e45]:
+                    - generic [ref=f3e46]:
+                      - heading "강의 개요" [level=3] [ref=f3e49]
+                      - list [ref=f3e53]:
+                        - listitem [ref=f3e54]:
+                          - link "공지사항" [ref=f3e57] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/ubboard/view.php?id=1897
+                        - listitem [ref=f3e63]:
+                          - link "Q&A" [ref=f3e66] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/ubboard/view.php?id=1898
+                  - listitem [ref=f3e72]:
+                    - generic [ref=f3e73]:
+                      - generic [ref=f3e74]:
+                        - heading "1주차" [level=3] [ref=f3e76]
+                        - generic [ref=f3e77]: 현재 주차9월 01일 - 9월 07일
+                      - generic [ref=f3e83]:
+                        - generic [ref=f3e84]:
+                          - generic [ref=f3e86]:
+                            - generic [ref=f3e87]: 학습 목표
+                            - generic [ref=f3e88]: Agent란 무엇인가?
+                          - generic [ref=f3e91]:
+                            - generic [ref=f3e92]: 주요 학습 내용 및 방법
+                            - generic [ref=f3e95]:
+                              - paragraph [ref=f3e96]: AI Agent vs. Workflow
+                              - paragraph [ref=f3e97]: Agent Loop
+                              - paragraph [ref=f3e98]: Qwen 3.5 - 9B 실습 환경 구축
+                              - paragraph [ref=f3e99]: OpenAI 스타일 API 실습
+                        - list [ref=f3e100]:
+                          - listitem [ref=f3e101]:
+                            - generic [ref=f3e103]:
+                              - link "AI Agent 강의 개요 완료" [ref=f3e104] [cursor=pointer]:
+                                - /url: https://lxp.kau.ac.kr/mod/ubfile/view.php?id=4547
+                                - generic [ref=f3e107]:
+                                  - generic [ref=f3e108]: AI Agent 강의 개요
+                                  - generic [ref=f3e110]: 완료
+                              - paragraph [ref=f3e119]: 강의 개요
+                          - listitem [ref=f3e120]:
+                            - generic [ref=f3e122]:
+                              - link "AI Agent - 1주차 완료" [ref=f3e123] [cursor=pointer]:
+                                - /url: https://lxp.kau.ac.kr/mod/ubfile/view.php?id=4550
+                                - generic [ref=f3e126]:
+                                  - generic [ref=f3e127]: AI Agent - 1주차
+                                  - generic [ref=f3e129]: 완료
+                              - paragraph [ref=f3e138]: AI Agent란 무엇인가
+                  - listitem [ref=f3e139]:
+                    - generic [ref=f3e140]:
+                      - generic [ref=f3e141]:
+                        - heading "2주차" [level=3] [ref=f3e143]
+                        - generic [ref=f3e144]: 2주차9월 08일 - 9월 14일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e150]:
+                    - generic [ref=f3e151]:
+                      - generic [ref=f3e152]:
+                        - heading "3주차" [level=3] [ref=f3e154]
+                        - generic [ref=f3e155]: 3주차9월 15일 - 9월 21일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e161]:
+                    - generic [ref=f3e162]:
+                      - generic [ref=f3e163]:
+                        - heading "4주차" [level=3] [ref=f3e165]
+                        - generic [ref=f3e166]: 4주차9월 22일 - 9월 28일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e172]:
+                    - generic [ref=f3e173]:
+                      - generic [ref=f3e174]:
+                        - heading "5주차" [level=3] [ref=f3e176]
+                        - generic [ref=f3e177]: 5주차9월 29일 - 10월 05일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e183]:
+                    - generic [ref=f3e184]:
+                      - generic [ref=f3e185]:
+                        - heading "6주차" [level=3] [ref=f3e187]
+                        - generic [ref=f3e188]: 6주차10월 06일 - 10월 12일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e194]:
+                    - generic [ref=f3e195]:
+                      - generic [ref=f3e196]:
+                        - heading "7주차" [level=3] [ref=f3e198]
+                        - generic [ref=f3e199]: 7주차10월 13일 - 10월 19일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e205]:
+                    - generic [ref=f3e206]:
+                      - generic [ref=f3e207]:
+                        - heading "8주차" [level=3] [ref=f3e209]
+                        - generic [ref=f3e210]: 8주차10월 20일 - 10월 26일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e216]:
+                    - generic [ref=f3e217]:
+                      - generic [ref=f3e218]:
+                        - heading "9주차" [level=3] [ref=f3e220]
+                        - generic [ref=f3e221]: 9주차10월 27일 - 11월 02일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e227]:
+                    - generic [ref=f3e228]:
+                      - generic [ref=f3e229]:
+                        - heading "10주차" [level=3] [ref=f3e231]
+                        - generic [ref=f3e232]: 10주차11월 03일 - 11월 09일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e238]:
+                    - generic [ref=f3e239]:
+                      - generic [ref=f3e240]:
+                        - heading "11주차" [level=3] [ref=f3e242]
+                        - generic [ref=f3e243]: 11주차11월 10일 - 11월 16일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e249]:
+                    - generic [ref=f3e250]:
+                      - generic [ref=f3e251]:
+                        - heading "12주차" [level=3] [ref=f3e253]
+                        - generic [ref=f3e254]: 12주차11월 17일 - 11월 23일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e260]:
+                    - generic [ref=f3e261]:
+                      - generic [ref=f3e262]:
+                        - heading "13주차" [level=3] [ref=f3e264]
+                        - generic [ref=f3e265]: 13주차11월 24일 - 11월 30일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e271]:
+                    - generic [ref=f3e272]:
+                      - generic [ref=f3e273]:
+                        - heading "14주차" [level=3] [ref=f3e275]
+                        - generic [ref=f3e276]: 14주차12월 01일 - 12월 07일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e282]:
+                    - generic [ref=f3e283]:
+                      - generic [ref=f3e284]:
+                        - heading "15주차" [level=3] [ref=f3e286]
+                        - generic [ref=f3e287]: 15주차12월 08일 - 12월 14일
+                      - generic:
+                        - list
+                  - listitem [ref=f3e293]:
+                    - generic [ref=f3e294]:
+                      - generic [ref=f3e295]:
+                        - heading "16주차" [level=3] [ref=f3e297]
+                        - generic [ref=f3e298]: 16주차12월 15일 - 12월 21일
+                      - generic:
+                        - list
+                - generic [ref=f3e304]:
+                  - generic [ref=f3e307] [cursor=pointer]:
+                    - text: 상태
+                    - generic [ref=f3e308]: ":"
+                    - generic [ref=f3e309]: 전체
+                  - generic [ref=f3e315] [cursor=pointer]:
+                    - text: 분류
+                    - generic [ref=f3e316]: ":"
+                    - generic [ref=f3e317]: 전체
+      - contentinfo [ref=f3e321]:
+        - generic [ref=f3e322]:
+          - link "개인정보처리방침" [ref=f3e324] [cursor=pointer]:
+            - /url: https://kau.ac.kr/privacy/policy.php
+          - generic [ref=f3e325]: "(10540) 경기도 고양시 덕양구 항공대학로 76Tel : 02-300-0218"

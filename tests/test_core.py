@@ -1256,3 +1256,30 @@ def test_leading_and_trailing_punctuation_is_kept(src, tgt, want):
     지시로 부탁할 일이 아니라 우리가 되돌려 놓으면 되는 일이다.
     """
     assert proxy.keep_edges(src, tgt) == want
+
+
+# ── 이미 한국어인 항목은 번역기에 보내지 않는다 ──────────────────────────
+@pytest.mark.parametrize("src,already", [
+    ("목표를 달성하기 위해 환경을 관찰하고", True),
+    ("가능하다면 Workflow가 더 좋은 설계일 수 있다", True),
+    ("Goal이 불명확하면 Agent가 잘 동작하는지 평가할 수 없다", True),
+    ("A policy maps states to actions.", False),
+    ("LLM, Workflow, Agent", False),
+    ("search(query), open_document(id)", False),
+    ("", False),
+])
+def test_korean_text_is_not_sent_for_translation(src, already):
+    """원문이 이미 한국어면 번역할 것이 없다.
+
+    실측(AI Agent 1주차): 보낸 129개 항목 중 **36개(27%)가 이미 한국어**였다.
+    시간만 버리는 게 아니라 교수가 쓴 문장을 고쳐 놓는다.
+
+        '목표를 달성하기 위해 환경을 관찰하고'   → '…관찰한다'
+            뒤로 이어지는 문장을 끝맺어 버렸다
+        '가능하다면 Workflow가 더 좋은 설계일 수 있다'
+            → '…Workflow는 보다 우수한 설계 방식이 될 수 있다'
+
+    문턱 0.3 은 실측 분포의 골짜기다 — 0.1~0.3 구간에 6개뿐이고 그 양옆에
+    87개와 36개가 몰려 있다.
+    """
+    assert proxy.already_korean(src) is already

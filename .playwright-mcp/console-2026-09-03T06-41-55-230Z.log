@@ -1,0 +1,5 @@
+[     668ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6443
+[     668ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6443
+[     668ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6445
+[     668ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6445
+[     720ms] [LOG] Starting Moodle session timeout warning. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:1035

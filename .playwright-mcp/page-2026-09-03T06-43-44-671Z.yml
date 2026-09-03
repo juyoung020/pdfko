@@ -1,0 +1,401 @@
+- generic [active] [ref=f1e1]:
+  - status
+  - generic [ref=f1e2]:
+    - link "메인 콘텐츠로 건너뛰기" [ref=f1e3] [cursor=pointer]:
+      - /url: "#maincontent"
+    - generic [ref=f1e4]:
+      - banner [ref=f1e5]:
+        - generic [ref=f1e6]:
+          - button [ref=f1e8] [cursor=pointer]
+          - navigation "내비게이션 바" [ref=f1e14]:
+            - list [ref=f1e15]:
+              - listitem [ref=f1e16]:
+                - link [ref=f1e17] [cursor=pointer]:
+                  - /url: https://lxp.kau.ac.kr/
+                  - img "홈" [ref=f1e18]
+                  - text: 홈
+        - generic [ref=f1e19]:
+          - button "현재 페이지의 주요 기능 투어를 시작합니다." [ref=f1e20] [cursor=pointer]
+          - button "80" [ref=f1e23] [cursor=pointer]
+      - region "내용" [ref=f1e29]:
+        - main [ref=f1e30]:
+          - generic [ref=f1e31]:
+            - generic [ref=f1e32]:
+              - generic [ref=f1e33]:
+                - generic [ref=f1e34]:
+                  - heading "수강 중인 강좌" [level=3] [ref=f1e35]
+                  - generic [ref=f1e36]: "7"
+                - generic [ref=f1e37]:
+                  - button [ref=f1e38] [cursor=pointer]
+                  - link "설정" [ref=f1e45] [cursor=pointer]:
+                    - /url: https://lxp.kau.ac.kr/local/ubion/user/mycourse_setting.php
+                  - button "모두 펼치기" [ref=f1e51] [cursor=pointer]
+              - group "My Courses" [ref=f1e58]:
+                - button "Next slide" [ref=f1e59] [cursor=pointer]
+                - generic [ref=f1e62]:
+                  - tabpanel "1 of 7" [ref=f1e63]:
+                    - link "2026년 2학기 교과과정 학부 AI Agent(0536) (00) 최 최영식" [ref=f1e64] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1295
+                      - generic [ref=f1e66]:
+                        - generic [ref=f1e67]:
+                          - generic [ref=f1e69]:
+                            - paragraph [ref=f1e70]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e75]: 학부
+                          - heading "AI Agent(0536) (00)" [level=5] [ref=f1e76]
+                        - generic [ref=f1e78]:
+                          - generic [ref=f1e79]: 최
+                          - generic [ref=f1e80]: 최영식
+                  - tabpanel "2 of 7" [ref=f1e81]:
+                    - link "2026년 2학기 교과과정 학부 공학수학II(0420) (00) 김 김흥숙" [ref=f1e82] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1124
+                      - generic [ref=f1e84]:
+                        - generic [ref=f1e85]:
+                          - generic [ref=f1e87]:
+                            - paragraph [ref=f1e88]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e93]: 학부
+                          - heading "공학수학II(0420) (00)" [level=5] [ref=f1e94]
+                        - generic [ref=f1e96]:
+                          - generic [ref=f1e97]: 김
+                          - generic [ref=f1e98]: 김흥숙
+                  - tabpanel "3 of 7" [ref=f1e99]:
+                    - link "2026년 2학기 교과과정 학부 기초전자실험(0425) (00) 이 이효창" [ref=f1e100] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1104
+                      - generic [ref=f1e102]:
+                        - generic [ref=f1e103]:
+                          - generic [ref=f1e105]:
+                            - paragraph [ref=f1e106]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e111]: 학부
+                          - heading "기초전자실험(0425) (00)" [level=5] [ref=f1e112]
+                        - generic [ref=f1e114]:
+                          - generic [ref=f1e115]: 이
+                          - generic [ref=f1e116]: 이효창
+                  - tabpanel [aria-hidden] [ref=f1e117]:
+                    - link [ref=f1e118] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1771
+                      - generic [ref=f1e120]:
+                        - generic [ref=f1e121]:
+                          - generic [ref=f1e123]:
+                            - paragraph [ref=f1e124]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e129]: 학부
+                          - heading [level=5] [ref=f1e130]: 드론 강화학습(0538) (00)
+                        - generic [ref=f1e132]:
+                          - generic [ref=f1e133]: 장
+                          - generic [ref=f1e134]: 장인모
+                  - tabpanel [aria-hidden] [ref=f1e135]:
+                    - link [ref=f1e136] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1743
+                      - generic [ref=f1e138]:
+                        - generic [ref=f1e139]:
+                          - generic [ref=f1e141]:
+                            - paragraph [ref=f1e142]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e147]: 학부
+                          - heading [level=5] [ref=f1e148]: 로봇프로그래밍(0533) (00)
+                        - generic [ref=f1e150]:
+                          - generic [ref=f1e151]: 장
+                          - generic [ref=f1e152]: 장인모
+                  - tabpanel [aria-hidden] [ref=f1e153]:
+                    - link [ref=f1e154] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1294
+                      - generic [ref=f1e156]:
+                        - generic [ref=f1e157]:
+                          - generic [ref=f1e159]:
+                            - paragraph [ref=f1e160]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e165]: 학부
+                          - heading [level=5] [ref=f1e166]: 온디바이스 AI(0596) (00)
+                        - generic [ref=f1e168]:
+                          - generic [ref=f1e169]: 윤
+                          - generic [ref=f1e170]: 윤재웅
+                  - tabpanel [aria-hidden] [ref=f1e171]:
+                    - link [ref=f1e172] [cursor=pointer]:
+                      - /url: https://lxp.kau.ac.kr/course/view.php?id=1772
+                      - generic [ref=f1e174]:
+                        - generic [ref=f1e175]:
+                          - generic [ref=f1e177]:
+                            - paragraph [ref=f1e178]: 2026년 2학기 교과과정
+                            - paragraph [ref=f1e183]: 학부
+                          - heading [level=5] [ref=f1e184]: 지능센서공학(0537) (00)
+                        - generic [ref=f1e186]:
+                          - generic [ref=f1e187]: 김
+                          - generic [ref=f1e188]: 김필은
+            - generic [ref=f1e189]:
+              - heading "이번 주 할 일" [level=3] [ref=f1e192]
+              - generic [ref=f1e193]:
+                - generic [ref=f1e194]:
+                  - tablist [ref=f1e195]:
+                    - tab "교과과정 24" [selected] [ref=f1e196] [cursor=pointer]:
+                      - text: 교과과정
+                      - generic [ref=f1e197]: "24"
+                  - button "모두 접기" [ref=f1e199] [cursor=pointer]
+                - tabpanel "교과과정 24" [ref=f1e205]:
+                  - generic [ref=f1e207]:
+                    - generic [ref=f1e209]: 주차
+                    - generic [ref=f1e211]: 학습활동명
+                    - generic [ref=f1e213]: 활동유형
+                    - generic [ref=f1e215]: 시작/종료일시
+                    - generic [ref=f1e217]: 상태
+                  - generic [ref=f1e219]:
+                    - button "최 AI Agent(0536) (00) 총0개" [expanded] [ref=f1e223] [cursor=pointer]:
+                      - generic [ref=f1e225]:
+                        - generic [ref=f1e226]: 최
+                        - generic [ref=f1e227]: AI Agent(0536) (00)
+                      - generic [ref=f1e228]: 총0개
+                    - button "김 공학수학II(0420) (00) 총0개" [expanded] [ref=f1e234] [cursor=pointer]:
+                      - generic [ref=f1e236]:
+                        - generic [ref=f1e237]: 김
+                        - generic [ref=f1e238]: 공학수학II(0420) (00)
+                      - generic [ref=f1e239]: 총0개
+                    - generic [ref=f1e242]:
+                      - button "이 기초전자실험(0425) (00) 총23개" [expanded] [ref=f1e245] [cursor=pointer]:
+                        - generic [ref=f1e247]:
+                          - generic [ref=f1e248]: 이
+                          - generic [ref=f1e249]: 기초전자실험(0425) (00)
+                        - generic [ref=f1e250]: 총23개
+                      - generic [ref=f1e258]:
+                        - generic [ref=f1e259]:
+                          - generic [ref=f1e261]: 2주차
+                          - link "오실로스코프 사용법" [ref=f1e263] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5280
+                          - link "동영상" [ref=f1e266] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5280
+                          - generic [ref=f1e269]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e270]: 참여 가능
+                        - generic [ref=f1e277]:
+                          - generic [ref=f1e279]: 2주차
+                          - link "디지털 멀티미터 사용법" [ref=f1e281] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5282
+                          - link "동영상" [ref=f1e284] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5282
+                          - generic [ref=f1e287]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e288]: 참여 가능
+                        - generic [ref=f1e295]:
+                          - generic [ref=f1e297]: 2주차
+                          - link "멀티심 사용법" [ref=f1e299] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5283
+                          - link "동영상" [ref=f1e302] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5283
+                          - generic [ref=f1e305]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e306]: 참여 가능
+                        - generic [ref=f1e313]:
+                          - generic [ref=f1e315]: 2주차
+                          - link "전원공급기 사용법" [ref=f1e317] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5290
+                          - link "동영상" [ref=f1e320] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5290
+                          - generic [ref=f1e323]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e324]: 참여 가능
+                        - generic [ref=f1e331]:
+                          - generic [ref=f1e333]: 2주차
+                          - link "함수발생기 사용법" [ref=f1e335] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5292
+                          - link "동영상" [ref=f1e338] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5292
+                          - generic [ref=f1e341]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e342]: 참여 가능
+                        - generic [ref=f1e349]:
+                          - generic [ref=f1e351]: 3주차
+                          - link "Ch 2" [ref=f1e353] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5340
+                          - link "동영상" [ref=f1e356] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5340
+                          - generic [ref=f1e359]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e360]: 참여 가능
+                        - generic [ref=f1e367]:
+                          - generic [ref=f1e369]: 3주차
+                          - link "Ch 2 실습영상" [ref=f1e371] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5350
+                          - link "동영상" [ref=f1e374] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5350
+                          - generic [ref=f1e377]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e378]: 참여 가능
+                        - generic [ref=f1e385]:
+                          - generic [ref=f1e387]: 3주차
+                          - link "브레드보드 및 장비사용법 기초 영상" [ref=f1e389] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5370
+                          - link "동영상" [ref=f1e392] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5370
+                          - generic [ref=f1e395]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e396]: 참여 가능
+                        - generic [ref=f1e403]:
+                          - generic [ref=f1e405]: 4주차
+                          - link "Ch 3" [ref=f1e407] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5383
+                          - link "동영상" [ref=f1e410] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5383
+                          - generic [ref=f1e413]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e414]: 참여 가능
+                        - generic [ref=f1e421]:
+                          - generic [ref=f1e423]: 5주차
+                          - link "Ch 4" [ref=f1e425] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5407
+                          - link "동영상" [ref=f1e428] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5407
+                          - generic [ref=f1e431]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e432]: 참여 가능
+                        - generic [ref=f1e439]:
+                          - generic [ref=f1e441]: 5주차
+                          - link "Ch 4 실습영상" [ref=f1e443] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5409
+                          - link "동영상" [ref=f1e446] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5409
+                          - generic [ref=f1e449]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e450]: 참여 가능
+                        - generic [ref=f1e457]:
+                          - generic [ref=f1e459]: 6주차
+                          - link "Ch 5" [ref=f1e461] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5410
+                          - link "동영상" [ref=f1e464] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5410
+                          - generic [ref=f1e467]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e468]: 참여 가능
+                        - generic [ref=f1e475]:
+                          - generic [ref=f1e477]: 6주차
+                          - link "Ch 5 실습영상" [ref=f1e479] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5411
+                          - link "동영상" [ref=f1e482] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5411
+                          - generic [ref=f1e485]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e486]: 참여 가능
+                        - generic [ref=f1e493]:
+                          - generic [ref=f1e495]: 7주차
+                          - link "Ch 6" [ref=f1e497] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5415
+                          - link "동영상" [ref=f1e500] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5415
+                          - generic [ref=f1e503]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e504]: 참여 가능
+                        - generic [ref=f1e511]:
+                          - generic [ref=f1e513]: 7주차
+                          - link "Ch 6 실습영상" [ref=f1e515] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5417
+                          - link "동영상" [ref=f1e518] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5417
+                          - generic [ref=f1e521]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e522]: 참여 가능
+                        - generic [ref=f1e529]:
+                          - generic [ref=f1e531]: 9주차
+                          - link "Ch 7" [ref=f1e533] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5426
+                          - link "동영상" [ref=f1e536] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5426
+                          - generic [ref=f1e539]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e540]: 참여 가능
+                        - generic [ref=f1e547]:
+                          - generic [ref=f1e549]: 9주차
+                          - link "Ch 7 실습영상" [ref=f1e551] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5430
+                          - link "동영상" [ref=f1e554] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5430
+                          - generic [ref=f1e557]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e558]: 참여 가능
+                        - generic [ref=f1e565]:
+                          - generic [ref=f1e567]: 10주차
+                          - link "Ch 8" [ref=f1e569] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5437
+                          - link "동영상" [ref=f1e572] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5437
+                          - generic [ref=f1e575]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e576]: 참여 가능
+                        - generic [ref=f1e583]:
+                          - generic [ref=f1e585]: 10주차
+                          - link "Ch 8 실습영상" [ref=f1e587] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5438
+                          - link "동영상" [ref=f1e590] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5438
+                          - generic [ref=f1e593]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e594]: 참여 가능
+                        - generic [ref=f1e601]:
+                          - generic [ref=f1e603]: 11주차
+                          - link "Ch 9" [ref=f1e605] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5459
+                          - link "동영상" [ref=f1e608] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5459
+                          - generic [ref=f1e611]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e612]: 참여 가능
+                        - generic [ref=f1e619]:
+                          - generic [ref=f1e621]: 12주차
+                          - link "Ch 10" [ref=f1e623] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5465
+                          - link "동영상" [ref=f1e626] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5465
+                          - generic [ref=f1e629]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e630]: 참여 가능
+                        - generic [ref=f1e637]:
+                          - generic [ref=f1e639]: 12주차
+                          - link "Ch 10 실습영상" [ref=f1e641] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5467
+                          - link "동영상" [ref=f1e644] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5467
+                          - generic [ref=f1e647]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e648]: 참여 가능
+                        - generic [ref=f1e655]:
+                          - generic [ref=f1e657]: 13주차
+                          - link "Ch 11" [ref=f1e659] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5469
+                          - link "동영상" [ref=f1e662] [cursor=pointer]:
+                            - /url: https://lxp.kau.ac.kr/mod/vod/view.php?id=5469
+                          - generic [ref=f1e665]: 2026-09-01 00:00 ~ 2026-12-18 23:59
+                          - generic [ref=f1e666]: 참여 가능
+                    - button "장 드론 강화학습(0538) (00) 총0개" [expanded] [ref=f1e676] [cursor=pointer]:
+                      - generic [ref=f1e678]:
+                        - generic [ref=f1e679]: 장
+                        - generic [ref=f1e680]: 드론 강화학습(0538) (00)
+                      - generic [ref=f1e681]: 총0개
+                    - button "장 로봇프로그래밍(0533) (00) 총0개" [expanded] [ref=f1e687] [cursor=pointer]:
+                      - generic [ref=f1e689]:
+                        - generic [ref=f1e690]: 장
+                        - generic [ref=f1e691]: 로봇프로그래밍(0533) (00)
+                      - generic [ref=f1e692]: 총0개
+                    - button "윤 온디바이스 AI(0596) (00) 총0개" [expanded] [ref=f1e698] [cursor=pointer]:
+                      - generic [ref=f1e700]:
+                        - generic [ref=f1e701]: 윤
+                        - generic [ref=f1e702]: 온디바이스 AI(0596) (00)
+                      - generic [ref=f1e703]: 총0개
+                    - generic [ref=f1e706]:
+                      - button "김 지능센서공학(0537) (00) 총1개" [expanded] [ref=f1e709] [cursor=pointer]:
+                        - generic [ref=f1e711]:
+                          - generic [ref=f1e712]: 김
+                          - generic [ref=f1e713]: 지능센서공학(0537) (00)
+                        - generic [ref=f1e714]: 총1개
+                      - generic [ref=f1e723]:
+                        - generic [ref=f1e725]: 2주차
+                        - link "test" [ref=f1e727] [cursor=pointer]:
+                          - /url: https://lxp.kau.ac.kr/mod/quiz/view.php?id=4806
+                        - link "시험" [ref=f1e730] [cursor=pointer]:
+                          - /url: https://lxp.kau.ac.kr/mod/quiz/view.php?id=4806
+                        - generic [ref=f1e733]: 2026-09-09 13:33 ~ 2026-09-09 13:33
+                        - generic [ref=f1e734]: 시작 전
+            - generic [ref=f1e741]:
+              - generic [ref=f1e743]:
+                - generic [ref=f1e744]:
+                  - heading "시스템 공지" [level=3] [ref=f1e746]
+                  - link "더보기" [ref=f1e748] [cursor=pointer]:
+                    - /url: https://lxp.kau.ac.kr/mod/ubboard/view.php?id=11
+                - list [ref=f1e752]:
+                  - listitem [ref=f1e753]:
+                    - generic [ref=f1e754]: 등록된 게시글이 없습니다.
+              - generic [ref=f1e756]:
+                - heading "강의실 소식" [level=3] [ref=f1e759]
+                - list [ref=f1e761]:
+                  - listitem [ref=f1e762]:
+                    - generic [ref=f1e763]:
+                      - generic [ref=f1e764]: AI Agent(0536) (00)
+                      - link "API key 할당 관련 공지" [ref=f1e765] [cursor=pointer]:
+                        - /url: https://lxp.kau.ac.kr/mod/ubboard/article.php?id=1897&bwid=524
+                    - generic [ref=f1e767]: 2026-09-03
+                  - listitem [ref=f1e769]:
+                    - generic [ref=f1e770]:
+                      - generic [ref=f1e771]: AI Agent(0536) (00)
+                      - link "API 키 발급 안내" [ref=f1e772] [cursor=pointer]:
+                        - /url: https://lxp.kau.ac.kr/mod/ubboard/article.php?id=1897&bwid=437
+                    - generic [ref=f1e774]: 2026-09-02
+                  - listitem [ref=f1e776]:
+                    - generic [ref=f1e777]:
+                      - generic [ref=f1e778]: 온디바이스 AI(0596) (00)
+                      - link "오픈채팅방 접속 안내" [ref=f1e779] [cursor=pointer]:
+                        - /url: https://lxp.kau.ac.kr/mod/ubboard/article.php?id=4175&bwid=429
+                    - generic [ref=f1e781]: 2026-09-02
+      - contentinfo [ref=f1e783]:
+        - generic [ref=f1e784]:
+          - link "개인정보처리방침" [ref=f1e786] [cursor=pointer]:
+            - /url: https://kau.ac.kr/privacy/policy.php
+          - generic [ref=f1e787]: "(10540) 경기도 고양시 덕양구 항공대학로 76Tel : 02-300-0218"

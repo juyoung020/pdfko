@@ -370,7 +370,8 @@ def cache_put(k: str, src: str, tgt: str, attempts: int) -> None:
 STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "math_leaks": 0, "ligature_fixes": 0, "items": 0, "items_failed": 0,
          "items_rescued": 0, "style_dropped": 0, "fragment_mode": 0, "fragment_retried": 0,
-         "ligature_dissolved": 0, "json_repaired": 0, "truncated": 0}
+         "ligature_dissolved": 0, "json_repaired": 0, "truncated": 0,
+         "already_korean": 0}
 _sampled = 0
 
 app = FastAPI(title="pdfko proxy")
@@ -587,6 +588,21 @@ def keep_edges(src: str, tgt: str) -> str:
     if tail and not tgt.endswith(tail):
         tgt = tgt.rstrip() + tail
     return tgt
+
+
+def already_korean(src: str) -> bool:
+    """원문이 이미 한국어인가. 그렇다면 번역할 것이 없다.
+
+    강의 자료는 영어와 한국어가 섞여 온다. 한국어 문단까지 번역기에 보내면
+    시간만 버리는 게 아니라 **글쓴이의 문장을 고쳐 놓는다.** 실측(AI Agent
+    1주차): 129개 항목 중 36개(27%)가 이미 한국어였고, 그 중에는 뒤로
+    이어지는 `…관찰하고` 를 `…관찰한다` 로 끝맺어 버린 것도 있었다.
+
+    문턱 0.3 은 실측 분포의 골짜기다 — 0.1~0.3 구간에 6개뿐이고 그 양옆에
+    87개(영어)와 36개(한국어)가 몰려 있다.
+    """
+    body = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or ""))
+    return bool(body.strip()) and hangul_ratio(body) >= 0.3
 
 
 class Reason(str):
@@ -930,6 +946,14 @@ async def chat(request: Request):
 
     ckey = item_key(user)
     results: dict[str, str] = {}
+
+    # 이미 한국어인 항목은 번역기에 보내지 않는다. 보내면 글쓴이의 문장을
+    # 고쳐 놓는다 — 실측으로 129개 중 36개(27%)가 그랬다.
+    for it in (items or []):
+        iid = str(it.get("id"))
+        if iid not in results and already_korean(it.get("input", "")):
+            results[iid] = it.get("input", "")
+            STATS["already_korean"] += 1
     if items:
         for it in items:
             hit = cache_get(item_key(it.get("input", "")))

@@ -1,0 +1,4 @@
+[     112ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ https://lxp.kau.ac.kr/favicon.ico:0
+[     135ms] [LOG] TEST Script 가 로딩 되었습니다. @ :0
+[     135ms] [LOG] ✅ test.js 로드 완료 @ https://lxp.kau.ac.kr/local/csmsdoc/?id=4550&tp=m&pg=ubfile:90
+[    6106ms] [WARNING] i18next: init: i18next is already initialized. You should call init just once! @ :1

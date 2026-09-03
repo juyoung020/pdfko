@@ -1,0 +1,21 @@
+[     261ms] [WARNING] A parser-blocking, cross site (i.e. different eTLD+1) script, https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js, is invoked via document.write. The network request for this script MAY be blocked by the browser in this or a future page load due to poor network connectivity. If blocked in this page load, it will be confirmed in a subsequent console message. See https://www.chromestatus.com/feature/5718547946799104 for more details. @ https://lxp.kau.ac.kr/course/view.php?id=1295:36
+[     261ms] [WARNING] A parser-blocking, cross site (i.e. different eTLD+1) script, https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js, is invoked via document.write. The network request for this script MAY be blocked by the browser in this or a future page load due to poor network connectivity. If blocked in this page load, it will be confirmed in a subsequent console message. See https://www.chromestatus.com/feature/5718547946799104 for more details. @ https://lxp.kau.ac.kr/course/view.php?id=1295:36
+[     325ms] [INFO] 🌐 i18next is maintained with support from Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙 @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:1
+[     448ms] [LOG] [LXP] Waiting for token... @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:57
+[     448ms] [LOG] [LXP] Token status: {isLmsSite: false, hasWSTOKEN: true, wsTokenValue: 29c77cd9bc9948f36a53dadc5843f862, isLocal: false, hostname: lxp.kau.ac.kr} @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:57
+[     553ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6443
+[     553ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6443
+[     553ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6445
+[     553ms] [WARNING] Failed to execute 'write' on 'Document': It isn't possible to write into a document from an asynchronously-loaded external script unless it is explicitly opened. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:6445
+[     599ms] [LOG] Starting Moodle session timeout warning. @ https://lxp.kau.ac.kr/lib/requirejs.php/1788396984/core/first.js:1035
+[    5532ms] [ERROR] [LXP] Token not found after max retries @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:57
+[    5532ms] [ERROR] getAihubSettingInfos error: Error: Authentication token is required
+    at lk (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:57574)
+    at async pk (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:63901)
+    at async I$ (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:65152)
+    at async HTMLDocument.<anonymous> (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:696:69929) @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:57
+[    5532ms] [ERROR] [LXP] Failed to load settings: Error: Authentication token is required
+    at lk (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:57574)
+    at async pk (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:63901)
+    at async I$ (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:58:65152)
+    at async HTMLDocument.<anonymous> (https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:696:69929) @ https://d2hevfiulrbkfw.cloudfront.net/ubion-courseware.umd-prod.js:695

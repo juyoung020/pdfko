@@ -1,0 +1,36 @@
+- generic [active] [ref=e1]:
+  - status
+  - generic [ref=e2]:
+    - link "메인 콘텐츠로 건너뛰기" [ref=e3] [cursor=pointer]:
+      - /url: "#maincontent"
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - link [ref=e6] [cursor=pointer]:
+          - /url: https://lxp.kau.ac.kr
+          - img "logo" [ref=e7]
+      - main [ref=e11]:
+        - generic [ref=e12]:
+          - generic [ref=e13]:
+            - generic [ref=e14]:
+              - heading "로그인" [level=2] [ref=e15]
+              - heading "한국항공대LXP에 오신 것을 환영합니다" [level=3] [ref=e17]
+            - generic [ref=e18]:
+              - generic [ref=e20]:
+                - textbox "사용자 아이디" [ref=e21]
+                - generic: 사용자 아이디
+              - generic [ref=e23]:
+                - textbox "비밀번호" [ref=e24]
+                - generic: 비밀번호
+              - generic [ref=e26]:
+                - checkbox "아이디 저장" [ref=e27]
+                - generic [ref=e28]: 아이디 저장
+            - button "로그인" [ref=e30] [cursor=pointer]
+          - generic [ref=e31]:
+            - link [ref=e32] [cursor=pointer]:
+              - /url: https://play.google.com/store/apps/details?id=kr.coursemos.lxp&pcampaignid=web_share
+              - img "android" [ref=e33]
+            - link [ref=e34] [cursor=pointer]:
+              - /url: https://apps.apple.com/kr/app/%EC%BD%94%EC%8A%A4%EB%AA%A8%EC%8A%A4-lxp/id6757424159
+              - img "ios" [ref=e35]
+    - contentinfo [ref=e36]:
+      - generic [ref=e37]: "(10540) 경기도 고양시 덕양구 항공대학로 76Tel : 02-300-0218"

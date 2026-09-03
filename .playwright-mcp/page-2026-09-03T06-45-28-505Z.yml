@@ -1,0 +1,45 @@
+- generic [active] [ref=f4e1]:
+  - status
+  - generic [ref=f4e2]:
+    - link "메인 콘텐츠로 건너뛰기" [ref=f4e3] [cursor=pointer]:
+      - /url: "#maincontent"
+    - generic [ref=f4e4]:
+      - banner [ref=f4e5]:
+        - generic [ref=f4e6]:
+          - button [ref=f4e8] [cursor=pointer]
+          - navigation "내비게이션 바" [ref=f4e14]:
+            - list [ref=f4e15]:
+              - listitem [ref=f4e16]:
+                - link [ref=f4e17] [cursor=pointer]:
+                  - /url: https://lxp.kau.ac.kr/
+                  - img "홈" [ref=f4e18]
+                  - text: 홈
+              - text: / / /
+              - listitem [ref=f4e19]:
+                - text: /
+                - link "AI Agent - 1주차" [ref=f4e20] [cursor=pointer]:
+                  - /url: https://lxp.kau.ac.kr/mod/ubfile/view.php?id=4550
+        - button "81" [ref=f4e22] [cursor=pointer]
+      - generic [ref=f4e26]:
+        - generic [ref=f4e27]:
+          - link [ref=f4e28] [cursor=pointer]:
+            - /url: https://lxp.kau.ac.kr/course/view.php?id=1295&mode=sections#section-1
+          - link "AI Agent - 1주차 AI Agent - 1주차" [ref=f4e31] [cursor=pointer]:
+            - /url: https://lxp.kau.ac.kr/mod/ubfile/view.php?id=4550
+            - img "AI Agent - 1주차" [ref=f4e33]
+            - generic [ref=f4e34]: AI Agent - 1주차
+        - generic [ref=f4e36]:
+          - generic [ref=f4e37]: 활동 상태
+          - generic [ref=f4e38]: 완료
+      - region "내용" [ref=f4e46]:
+        - generic [ref=f4e47]:
+          - generic [ref=f4e48]: 설명
+          - paragraph [ref=f4e51]: AI Agent란 무엇인가
+        - main [ref=f4e52]:
+          - link "열기" [ref=f4e54] [cursor=pointer]:
+            - /url: https://lxp.kau.ac.kr/mod/ubfile/viewer.php?id=4550
+      - contentinfo [ref=f4e55]:
+        - generic [ref=f4e56]:
+          - link "개인정보처리방침" [ref=f4e58] [cursor=pointer]:
+            - /url: https://kau.ac.kr/privacy/policy.php
+          - generic [ref=f4e59]: "(10540) 경기도 고양시 덕양구 항공대학로 76Tel : 02-300-0218"

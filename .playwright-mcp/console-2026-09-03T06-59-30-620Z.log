@@ -1,0 +1,3 @@
+[     293ms] [LOG] TEST Script 가 로딩 되었습니다. @ :0
+[     293ms] [LOG] ✅ test.js 로드 완료 @ https://lxp.kau.ac.kr/local/csmsdoc/?id=4547&tp=m&pg=ubfile:90
+[     599ms] [WARNING] i18next: init: i18next is already initialized. You should call init just once! @ :1
