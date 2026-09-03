@@ -1313,3 +1313,41 @@ def test_a_passing_item_has_no_reason():
     ok, why = _verdict("A policy maps states to actions.",
                        "정책은 상태를 행동으로 사상하는 함수이다.")
     assert ok and not why
+
+
+# ── 번역할 산문이 있는가 (판단을 한 곳에서 내린다) ───────────────────────
+@pytest.mark.parametrize("src,want", [
+    ("https://www.davidsilver.uk/", False),
+    ("https://github.com/inmo-jang/aircombat-rl", False),
+    ("{v1}{v2}{v3}", False),
+    ("42 / 15 – 5%", False),
+    ("A policy maps states to actions.", True),
+    ("guidance", True),
+    ("fixed height", True),
+    ("Auto Pilot", True),
+    ("See https://example.org for the derivation of the bound.", True),
+])
+def test_whether_an_item_has_prose_to_translate(src, want):
+    """URL·수식·숫자를 걷어내고 **산문이 남는지**로 판단한다.
+
+    예전 기준은 `라틴 글자 수 >= 12` 였다. 축이 틀렸다 — URL 은 글자가
+    21자라 기준을 통과해 한글 검사를 받고 실패했고(정답이 원문 그대로인데도),
+    3회 재시도에 조각 모드까지 태운 뒤 포기했다. 반대로 `guidance`,
+    `Auto Pilot` 같이 **번역해야 하는** 짧은 라벨은 기준에 걸려 검사를
+    면제받았다. 실측 53개 항목 중 7개가 URL 뿐인 항목이었다.
+    """
+    assert proxy.has_prose(src) is want, (src, proxy.has_prose(src))
+
+
+def test_a_url_only_item_is_not_a_translation_failure():
+    """URL 이 그대로 돌아온 것은 실패가 아니라 정답이다."""
+    url = "https://www.davidsilver.uk/"
+    ok, why = proxy.check([{"id": 0, "input": url}], [{"id": 0, "output": url}])
+    assert ok, why
+
+
+def test_prose_that_echoes_is_still_a_failure():
+    """반대로 산문이 그대로 돌아오면 여전히 실패다."""
+    src = "A policy maps states to actions in every state of the world."
+    ok, why = proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": src}])
+    assert not ok and why.kind == "hangul", why

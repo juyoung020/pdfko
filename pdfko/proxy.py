@@ -399,6 +399,32 @@ def leftover_english(tgt: str) -> str | None:
     return None
 
 
+_URL_RE = re.compile(r"https?://\S+|www\.\S+|\S+@\S+\.\S+")
+_WORDISH = re.compile(r"[A-Za-z][A-Za-z'-]*")
+
+
+def has_prose(src: str) -> bool:
+    """번역할 산문이 있는가. **이 판단은 여기서만 내린다.**
+
+    예전에는 `라틴 글자 수 >= 12` 로 갈랐고, 그 식이 네 곳에 흩어져 있었다.
+    축이 틀렸다:
+
+      · `https://www.davidsilver.uk/` 는 글자가 21자라 기준을 **통과**한다.
+        그래서 한글 검사를 받고 실패한다 — 정답이 원문 그대로인데도. 3회
+        재시도에 조각 모드까지 태운 뒤 포기했다. 실측 53개 항목 중 7개.
+      · 반대로 `guidance`, `Auto Pilot` 처럼 **번역해야 하는** 짧은 라벨은
+        기준에 걸려 검사를 면제받았다.
+
+    URL·자리표시자·서식 태그를 걷어내고 낱말이 남는지 본다. 낱말 하나뿐이면
+    네 글자는 되어야 한다 — `RL`, `MDP` 같은 약어만 남은 것은 산문이 아니다.
+    """
+    t = _URL_RE.sub(" ", src or "")
+    t = PLACEHOLDER_RE.sub(" ", t)
+    t = STYLE_RE.sub(" ", t)
+    words = [w for w in _WORDISH.findall(t) if len(w) >= 2]
+    return len(words) >= 2 or (len(words) == 1 and len(words[0]) >= 4)
+
+
 class Reason(str):
     """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
 
@@ -477,9 +503,9 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         if _JONDAE_RE.search(tgt.strip()):
             return False, Reason("jondae", f"id {iid} 존댓말")
 
-        # 번역할 산문이 있었는데 한글이 없으면 반향이다
-        letters = sum(1 for c in src if c.isalpha() and c.isascii())
-        if letters >= 12 and hangul_ratio(tgt) < 0.15:
+        # 번역할 산문이 있었는데 한글이 없으면 반향이다.
+        # 산문이 없으면(URL·수식·숫자뿐) 원문 그대로가 정답이므로 넘어간다.
+        if has_prose(src) and hangul_ratio(tgt) < 0.15:
             return False, Reason("hangul", f"id {iid} hangul {hangul_ratio(tgt):.2f}")
 
         # 반쪽 번역. 한글 비율만 보면 통과한다 — 80%가 한국어인 문단에 영어
@@ -490,7 +516,7 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
 
         # 길이 폭주. 짧은 라벨과 수식은 면제한다.
         sw = est_width(src)
-        if letters >= 12 and sw >= 10:
+        if has_prose(src) and sw >= 10:
             ratio = est_width(tgt) / sw
             if ratio > WIDTH_MAX:
                 return False, Reason("width", f"id {iid} width {ratio:.2f}x")
