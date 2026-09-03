@@ -418,7 +418,7 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         if o is None:
             return False, f"id {iid} missing"
 
-        tgt = o.get("output")
+        tgt = item_output(o)
         if not isinstance(tgt, str) or not tgt.strip():
             return False, f"id {iid} empty output"
         src = it.get("input", "")
@@ -473,6 +473,34 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
     return True, ""
 
 
+def item_output(o) -> str:
+    """항목에서 번역문을 꺼낸다. `output` 이 없으면 `input` 도 본다.
+
+    모델이 요청 스키마를 통째로 되풀이해 번역을 **`input` 에 담아** 보내는
+    일이 있다. 실측(L02 발표자료):
+
+        {"id": 0, "input": "RL(다른 분야와의 연계)이란 무엇인가?",
+         "layout_label": "plain text"}
+
+    번역문 자체는 멀쩡했고 폭 검사도 통과할 물건이었다. 그런데 여기서 빈
+    문자열을 돌려주면 **모든 진단이 눈을 감는다** — 폭 초과도, 영어 잔존도,
+    자리표시자 유실도 빈 문자열에서는 감지되지 않는다. 그래서 재시도 힌트가
+    "자리표시자를 지켜라"로 떨어지고(그 문장에는 자리표시자가 하나도 없다),
+    모델은 형식이 틀렸다는 말을 못 들은 채 세 번 다 같은 모양을 돌려준 뒤
+    영어 원문이 그대로 남았다. 22쪽 중 11쪽이 그 꼴이었다.
+
+    `input` 을 살려 쓰되 검증은 그대로 건다. 모델이 원문을 그냥 되풀이한
+    것이라면 한글 검사에서 걸러진다.
+    """
+    if not isinstance(o, dict):
+        return ""
+    v = o.get("output")
+    if isinstance(v, str) and v.strip():
+        return v
+    v = o.get("input")
+    return v if isinstance(v, str) else ""
+
+
 def repair_hint(items: list[dict], out: list | None) -> str:
     """어떤 항목에서 어떤 자리표시자가 빠졌는지 짚어 주는 재시도 지시.
 
@@ -487,7 +515,7 @@ def repair_hint(items: list[dict], out: list | None) -> str:
     for it in items:
         iid = str(it.get("id"))
         src = it.get("input", "")
-        tgt = (by_id.get(iid) or {}).get("output") or ""
+        tgt = item_output(by_id.get(iid))
         want = PLACEHOLDER_RE.findall(src)
         got = PLACEHOLDER_RE.findall(tgt)
         missing = [p for p in want if got.count(p) < want.count(p)]
@@ -503,7 +531,7 @@ def repair_hint(items: list[dict], out: list | None) -> str:
     wide = []
     for it in items:
         iid = str(it.get("id"))
-        tgt = (by_id.get(iid) or {}).get("output") or ""
+        tgt = item_output(by_id.get(iid))
         src = it.get("input", "")
         if est_width(src) >= 10:
             r = est_width(tgt) / est_width(src)
@@ -523,7 +551,7 @@ def repair_hint(items: list[dict], out: list | None) -> str:
     half = []
     for it in items:
         iid = str(it.get("id"))
-        run = leftover_english((by_id.get(iid) or {}).get("output") or "")
+        run = leftover_english(item_output(by_id.get(iid)))
         if run:
             half.append(f'id {iid}: still English — "{run[:80]}"')
     if half:
@@ -534,8 +562,18 @@ def repair_hint(items: list[dict], out: list | None) -> str:
                   "English sentence may remain.")
 
     if not lines:
-        return ("Some items were wrong. Re-translate and keep every {vN} "
-                "placeholder exactly once.")
+        # 자리표시자 얘기는 **원문에 실제로 있을 때만** 한다. 없는데 지키라고
+        # 하면 모델은 없는 것을 만들어 넣는다. 실측으로 URL 항목이 한글이
+        # 없다는 이유로 실패 판정을 받자 이 힌트가 붙었고, 다음 시도에서
+        # `https://www.davidsilver.uk/{vN}/` 가 돌아왔다 — 멀쩡한 URL 이
+        # 망가진 것이다. 지시가 틀리면 모델은 그 틀린 지시를 정확히 따른다.
+        if any(PLACEHOLDER_RE.search(it.get("input", "")) for it in items):
+            return ("Some items were wrong. Re-translate and keep every {vN} "
+                    "placeholder exactly once.")
+        return ("These items were not translated into Korean. Translate them "
+                "fully. Leave URLs, code identifiers, citations and proper "
+                "nouns exactly as they are — do not add, invent or reword "
+                "anything that is not in the source.")
     return (
         "Your previous reply lost placeholders. Fix ONLY these items and "
         "reply with the complete JSON array again.\n"
@@ -760,7 +798,7 @@ async def chat(request: Request):
         try:
             raw = await call(msgs_for(sub, drop_glossary=drop_glossary),
                              0.1, max_tok)
-            got = {str(o.get("id")): o.get("output")
+            got = {str(o.get("id")): item_output(o)
                    for o in (parse_output(raw) or []) if isinstance(o, dict)}
         except Exception:
             return None, 0
@@ -800,7 +838,7 @@ async def chat(request: Request):
                 raw2 = await call(msgs_for(sub2, hint2,
                                            drop_glossary=drop_glossary),
                                   0.0, max_tok)
-                got2 = {str(o.get("id")): o.get("output")
+                got2 = {str(o.get("id")): item_output(o)
                         for o in (parse_output(raw2) or []) if isinstance(o, dict)}
             except Exception:
                 got2 = {}
@@ -875,7 +913,7 @@ async def chat(request: Request):
         still = []
         for it in pending:
             iid = str(it.get("id"))
-            cand = (by_id.get(iid) or {}).get("output")
+            cand = item_output(by_id.get(iid)) or None
             if isinstance(cand, str) and check([it], [{"id": it.get("id"),
                                                        "output": cand}])[0]:
                 results[iid] = cand

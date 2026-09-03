@@ -216,3 +216,92 @@ def test_the_upstream_never_sees_broken_ligatures(rig):
     ask(cli, "We compare di↵erent policies under the same conditions.")
     assert "different" in up.seen[0], up.seen[0][-200:]
     assert "di↵erent" not in up.seen[0]
+
+
+# ── 모델이 스키마를 되풀이해 돌려줄 때 ───────────────────────────────────
+def test_a_translation_returned_under_the_input_key_is_still_accepted(rig):
+    """모델이 `output` 대신 `input` 에 번역을 담아 보내도 살려 쓴다.
+
+    실측(L02 발표자료): 모델이 요청 스키마를 그대로 되풀이했다.
+
+        {"id": 0, "input": "RL(다른 분야와의 연계)이란 무엇인가?",
+         "layout_label": "plain text"}
+
+    번역문 자체는 멀쩡했다. 그런데 `o.get("output")` 이 None 이라 tgt 가 빈
+    문자열이 되고, 그때부터 **모든 진단이 눈을 감는다** — 폭 초과도, 영어
+    잔존도, 자리표시자 유실도 빈 문자열에서는 감지되지 않는다. 그래서
+    재시도 힌트가 "자리표시자를 지켜라"로 떨어졌고(그 문장에는 자리표시자가
+    하나도 없다), 모델은 형식이 틀렸다는 말을 못 들어 3차까지 같은 모양을
+    돌려줬다. 결국 영어 원문이 그대로 남았다. 22쪽 중 11쪽이 이 꼴이었다.
+    """
+    src = "What is RL (with other domains)?"
+    echoed = json.dumps([{"id": 0, "input": "RL이란 무엇인가?",
+                          "layout_label": "plain text"}], ensure_ascii=False)
+    up, cli = rig(echoed)
+    got = ask(cli, src)
+    assert got["0"] == "RL이란 무엇인가?", got
+    assert len(up.seen) == 1, "살릴 수 있는 답을 버리고 다시 물었다"
+
+
+def test_the_normal_output_key_still_wins(rig):
+    """둘 다 있으면 `output` 이 정답이다 — 되풀이된 `input` 은 원문일 수 있다."""
+    both = json.dumps([{"id": 0, "input": "What is RL?",
+                        "output": "RL이란 무엇인가?"}], ensure_ascii=False)
+    _, cli = rig(both)
+    assert ask(cli, "What is RL?")["0"] == "RL이란 무엇인가?"
+
+
+def test_an_echoed_source_is_not_mistaken_for_a_translation(rig):
+    """`input` 을 살려 쓰되 검증은 그대로 건다. 영어 반향은 통과하면 안 된다."""
+    src = "A policy maps states to actions in every state of the world."
+    echo = json.dumps([{"id": 0, "input": src}], ensure_ascii=False)
+    up, cli = rig(echo)
+    assert ask(cli, src)["0"] == src        # 끝내 실패 → 원문 반환
+    assert len(up.seen) >= 3, "영어 반향을 번역으로 받아들였다"
+
+
+def test_a_format_mistake_is_named_in_the_retry(rig):
+    """출력이 통째로 비면 **형식이 틀렸다**고 말해야 한다.
+
+    자리표시자가 없는 문장에 "자리표시자를 지켜라"라고 하면 모델은 무엇을
+    고쳐야 할지 알 수 없다.
+    """
+    nothing = json.dumps([{"id": 0, "nonsense": "x"}], ensure_ascii=False)
+    up, cli = rig(nothing, nothing, nothing)
+    ask(cli, "A policy maps states to actions in every state of the world.")
+    assert any("output" in s for s in up.seen[1:]), \
+        f"형식을 짚어주지 않았다: {up.seen[1][-200:]}"
+
+
+def test_no_placeholder_advice_when_the_source_has_none(rig):
+    """원문에 자리표시자가 없으면 자리표시자 얘기를 꺼내면 안 된다.
+
+    실측: URL 항목이 한글이 없다는 이유로 실패 판정을 받자, 재시도 힌트가
+    "keep every {vN} placeholder exactly once" 로 떨어졌다. 원문에는 {vN} 이
+    하나도 없다. 모델은 시키는 대로 **없는 것을 만들어 넣었다.**
+
+        1차  https://www.davidsilver.uk/
+        2차  https://www.davidsilver.uk/{vN}/     ← 멀쩡한 URL 이 망가졌다
+
+    지시가 틀리면 모델은 그 틀린 지시를 정확히 따른다.
+    """
+    src = "https://www.davidsilver.uk/ and https://example.org/paper"
+    echo = json.dumps([{"id": 0, "output": src}], ensure_ascii=False)
+    up, cli = rig(echo, echo, echo)
+    ask(cli, src)
+    # `SYSTEM_PREFIX` 에도 "never drop a {vN} token" 이 있지만 그건 무해하다.
+    # 해로운 것은 **없는 것을 지키라고 요구하는** 재시도 힌트다.
+    bad = "keep every {vN} placeholder"
+    for i, sent in enumerate(up.seen[1:], 2):
+        assert bad not in sent, \
+            f"{i}차 힌트가 없는 자리표시자를 지키라고 했다:\n{sent[-260:]}"
+
+
+def test_placeholder_advice_still_given_when_the_source_has_them(rig):
+    """반대로, 진짜 자리표시자가 있으면 그 지시는 남아야 한다."""
+    src = "The step size {v1} controls how fast {v2} changes over time."
+    dropped = json.dumps([{"id": 0, "output": "스텝 크기가 속도를 조절한다."}],
+                         ensure_ascii=False)
+    up, cli = rig(dropped, dropped, dropped)
+    ask(cli, src)
+    assert any("{v" in s for s in up.seen[1:]), "자리표시자 지시가 사라졌다"
