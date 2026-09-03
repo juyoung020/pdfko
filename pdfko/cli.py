@@ -448,8 +448,13 @@ def _main(argv: list[str] | None = None) -> int:
             info(f"  앞선 실행의 프록시를 재사용합니다 — 미들웨어 로그는 {pl}")
 
         step("번역")
+        # 어떤 설정으로 끝난 구간인지 대조할 지문. pdfko 가 엔진을 부르는
+        # 방식이 바뀌면 지문이 달라져, 끝난 구간도 다시 번역한다.
+        stamp = runner.settings_stamp(runner.babeldoc_cmd(
+            src, work, "", work, model=a.model, proxy_port=0,
+            prompt_file=a.prompt))
         for i, c in enumerate(chunks, 1):
-            if c.done:
+            if c.done(stamp):
                 info(f"[{i}/{len(chunks)}] {c.name} 건너뜀 (완료됨)")
                 continue
             info(f"[{i}/{len(chunks)}] {c.name} …")

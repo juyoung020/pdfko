@@ -99,11 +99,13 @@ def test_both_paths_do_the_same_steps():
     import inspect
     from pdfko import cli, web
 
-    # `--ignore-cache` 는 runner 가 붙이므로 양쪽 소스에는 안 보인다.
-    # 대신 두 경로가 같은 runner 함수를 쓰는지로 확인한다.
-    import inspect as _i
+    # `--ignore-cache` 는 runner 가 붙으므로 양쪽 소스에는 안 보인다.
+    # 대신 runner 가 실제로 조립하는 명령줄을 본다.
+    from pathlib import Path as _P
     from pdfko import runner as _r
-    assert "--ignore-cache" in _i.getsource(_r.translate_chunk)
+    assert "--ignore-cache" in _r.babeldoc_cmd(
+        _P("/x/a.pdf"), _P("/tmp/w"), "1-4", _P("/tmp/o"),
+        model="m", proxy_port=1, prompt_file=None)
 
     cli_src = inspect.getsource(cli._main)
     web_src = inspect.getsource(web._run)

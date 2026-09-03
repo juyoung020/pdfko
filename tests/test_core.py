@@ -600,8 +600,13 @@ def test_engine_cache_is_bypassed_not_deleted():
     이번 실행만 안 쓰면 목적은 똑같이 이룬다.
     """
     import inspect
+    from pathlib import Path
     from pdfko import recover, runner
-    assert "--ignore-cache" in inspect.getsource(runner.translate_chunk)
+    # 소스 문자열이 아니라 **실제로 조립되는 명령줄**을 본다.
+    cmd = runner.babeldoc_cmd(Path("/x/a.pdf"), Path("/tmp/w"), "1-4",
+                              Path("/tmp/o"), model="m", proxy_port=1,
+                              prompt_file=None)
+    assert "--ignore-cache" in cmd
     assert "--ignore-cache" in inspect.getsource(recover.retranslate_page)
     assert not hasattr(runner, "ENGINE_CACHE")     # 지울 대상 자체가 없다
 
@@ -1405,3 +1410,104 @@ def test_the_overlap_detector_actually_fires():
     assert v.collision > qa.COLLISION_MAX, v.collision
     assert v.broken and any("겹침" in r for r in v.reasons), v.reasons
     o.close(); t.close()
+
+
+# ── 발표자료인가 교재인가 ────────────────────────────────────────────────
+def test_a_landscape_document_is_treated_as_slides():
+    """줄 분리는 발표자료에만 켠다. 교재에 켜면 문단이 토막난다.
+
+    babeldoc 의 `--split-short-lines` 는 짧은 줄을 따로 떼어 준다. 발표자료
+    에서는 이것이 옳다 — 화살표·목록 항목이 원래 각자 한 줄이기 때문이다.
+
+        전  '입력↓' / 'LLM↓' / '출력'
+        후  '입력' / '↓' / 'LLM' / '↓' / '출력'
+
+    그런데 교재에 켜면 반대가 된다. 실측(548쪽 교재): 배율 3.0 에서
+    121쪽은 44줄 **전부**가 분리 대상이었다. 이어지는 문단이 줄마다 토막나
+    문맥 없이 번역된다.
+
+    가르는 신호는 쪽 모양이다 — 실측으로 발표자료 1.78, 교재 0.78 이었다.
+    내용이 아니라 문서 형식의 성질이라 흔들리지 않는다.
+    """
+    import pymupdf
+    from pdfko.runner import looks_like_slides
+
+    wide = pymupdf.open()
+    wide.new_page(width=720, height=405)          # 16:9
+    tall = pymupdf.open()
+    tall.new_page(width=595, height=842)          # A4 세로
+
+    assert looks_like_slides(wide) is True
+    assert looks_like_slides(tall) is False
+    wide.close(); tall.close()
+
+
+def test_settings_change_invalidates_a_finished_chunk():
+    """엔진 호출 방식이 바뀌면 끝난 구간도 다시 번역해야 한다.
+
+    구간 `.done` 표식은 **중단된 실행을 이어가려고** 있다. 그런데 표식이
+    "끝났다"만 기록하면, pdfko 를 고쳐 놓고 같은 파일을 다시 돌렸을 때
+    옛 결과가 조용히 그대로 나온다 — 실측으로 겪었다. 줄 분리 배율을 새로
+    넣고 재실행했더니 `1-23 건너뜀 (완료됨)` 만 찍히고 옛 PDF 가 나왔다.
+
+    표식에 **무슨 설정으로 만든 것인지**를 같이 적어 두면, 설정이 그대로일
+    때만 건너뛴다. 이어하기는 살고 함정은 사라진다.
+    """
+    import tempfile
+    from pathlib import Path
+    from pdfko.runner import Chunk
+
+    with tempfile.TemporaryDirectory() as d:
+        c = Chunk(1, 4, Path(d) / "1-4")
+        c.outdir.mkdir()
+        assert c.done("설정A") is False        # 아직 안 끝났다
+
+        c.mark_done("설정A")
+        assert c.done("설정A") is True         # 같은 설정이면 건너뛴다
+        assert c.done("설정B") is False        # 설정이 바뀌면 다시 한다
+
+
+def test_the_stamp_ignores_settings_that_do_not_change_the_output():
+    """포트·경로처럼 실행마다 달라지는 값은 표식에 넣지 않는다.
+
+    넣으면 이어하기가 죽는다 — 미들웨어 포트는 실행마다 새로 잡히므로,
+    중단된 번역을 이어가려 해도 매번 표식이 어긋나 처음부터 다시 돈다.
+    """
+    from pdfko.runner import settings_stamp
+
+    base = ["babeldoc", "--files", "/x/a.pdf", "--pages", "1-4",
+            "--openai-base-url", "http://127.0.0.1:8101/v1",
+            "--min-text-length", "1", "--qps", "10",
+            "--working-dir", "/tmp/w1", "--output", "/tmp/o1"]
+    moved = ["babeldoc", "--files", "/x/a.pdf", "--pages", "5-8",
+             "--openai-base-url", "http://127.0.0.1:9999/v1",
+             "--min-text-length", "1", "--qps", "4",
+             "--working-dir", "/tmp/w2", "--output", "/tmp/o2"]
+    assert settings_stamp(base) == settings_stamp(moved)
+
+    # 번역 결과를 바꾸는 값은 반드시 표식을 흔들어야 한다
+    for changed in (
+        base + ["--short-line-split-factor", "3.0"],
+        base[:-4] + ["--primary-font-family", "sans"] + base[-4:],
+    ):
+        assert settings_stamp(base) != settings_stamp(changed)
+
+
+def test_the_caller_computes_the_same_stamp_the_writer_records():
+    """묻는 쪽과 찍는 쪽의 지문이 같아야 한다.
+
+    `translate_chunk` 는 실제 포트·쪽 범위가 든 명령줄로 지문을 찍는다.
+    호출부는 그것들을 아직 모르니 빈 값으로 조립해 묻는다. 두 지문이
+    어긋나면 **이어하기가 영영 죽는다** — 끝난 구간마다 표식이 안 맞아
+    매번 처음부터 다시 돈다. 조용히 느려질 뿐 오류가 안 나서 알아채기 어렵다.
+    """
+    from pathlib import Path
+    from pdfko.runner import babeldoc_cmd, settings_stamp
+
+    src, work = Path("/x/a.pdf"), Path("/tmp/w")
+    asked = settings_stamp(babeldoc_cmd(
+        src, work, "", work, model="m", proxy_port=0, prompt_file=None))
+    written = settings_stamp(babeldoc_cmd(
+        src, work, "5-8", work / "part", model="m", proxy_port=8123,
+        prompt_file=None))
+    assert asked == written

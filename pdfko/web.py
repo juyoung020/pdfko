@@ -175,9 +175,13 @@ def _run(job: Job, pages: str) -> None:
         chunks = runner.plan_chunks(first, last, 40, job.work)
         if not chunks:
             raise ValueError(f"번역할 쪽이 없습니다: {first}-{last}")
+        # 어떤 설정으로 끝난 구간인지 대조할 지문 (cli 와 같은 이유).
+        stamp = runner.settings_stamp(runner.babeldoc_cmd(
+            src, job.work, "", job.work, model="hy-mt2-7b", proxy_port=0,
+            prompt_file=None))
         for i, c in enumerate(chunks, 1):
             pct = 10 + int(75 * (i - 1) / len(chunks))
-            if c.done:
+            if c.done(stamp):
                 job.say("번역", f"{c.name} 건너뜀 (완료됨)", pct)
                 continue
             job.say("번역", f"{c.name}  ({i}/{len(chunks)} 구간)", pct)

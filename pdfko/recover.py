@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pymupdf
 
-from . import qa
+from . import qa, runner
 from .qa import PageVerdict
 
 
@@ -103,11 +103,15 @@ def retranslate_page(page: int, orig_page: int, src: Path, work: Path, *,
             "--openai-api-key", "sk-local",
             "--ignore-cache",
             "--no-auto-extract-glossary",
-        # 기본값 5 는 `Yes`(3자)·`No`(2자) 같은 도식 라벨을 통째로 건너뛴다.
-        # 번역본에 영어가 그대로 남고, 그림혼재로 잡힌다. 짧은 것도 보낸다 —
-        # 프록시가 산문 여부를 따로 보므로 쓰레기까지 번역하지는 않는다.
-        "--min-text-length", "1",
-        "--split-short-lines",
+            # 기본값 5 는 `Yes`(3자)·`No`(2자) 같은 도식 라벨을 통째로
+            # 건너뛴다. 번역본에 영어가 남아 그림혼재로 잡힌다. 짧은 것도
+            # 보낸다 — 프록시가 산문 여부를 따로 보므로 쓰레기까지 번역하지는
+            # 않는다.
+            "--min-text-length", "1",
+            # 자르는 방식은 본 실행과 같아야 한다. 재시도가 다르게 자르면
+            # 고치려던 쪽만 다른 규칙으로 조판돼 앞뒤가 안 맞는다.
+            "--split-short-lines",
+            *runner.split_factor(src),
             "--primary-font-family", "serif",
             "--watermark-output-mode", "no_watermark",
             "--only-include-translated-page",

@@ -12,6 +12,11 @@ BabelDOC 은 문서를 끝까지 처리해야 PDF 를 내놓는다. 500쪽을 �
   2. 프록시 SQLite 캐시      — 성공한 문단만 저장 (실패는 저장하지 않는다)
   3. BabelDOC 자체 캐시      — 우리가 통제할 수 없다
 
+**1번은 설정 지문을 같이 적는다.** 그냥 "끝났다"만 남기면, pdfko 를 고쳐
+놓고 같은 파일을 다시 돌렸을 때 옛 결과가 조용히 그대로 나온다. 실측으로
+겪었다 — 줄 분리 배율을 새로 넣고 재실행했더니 `1-23 건너뜀 (완료됨)` 만
+찍히고 옛 PDF 가 나왔다. `settings_stamp` 가 그 지문이다.
+
 **3번을 우회하지 않으면 2번을 고쳐도 소용이 없다.** BabelDOC 이 자기 캐시에서
 바로 꺼내 쓰면서 프록시를 통째로 지나치기 때문이다. 그래서 엔진을 부를 때마다
 `--ignore-cache` 를 준다. 예전에는 그 파일을 지웠는데, 계정에 하나뿐이라
@@ -38,12 +43,24 @@ class Chunk:
     def name(self) -> str:
         return f"{self.first}-{self.last}"
 
-    @property
-    def done(self) -> bool:
-        return (self.outdir / ".done").exists()
+    def done(self, stamp: str = "") -> bool:
+        """끝났고, **그때와 같은 설정인가**.
 
-    def mark_done(self) -> None:
-        (self.outdir / ".done").touch()
+        표식이 "끝났다"만 기록하면 함정이 된다. pdfko 를 고쳐 놓고 같은
+        파일을 다시 돌려도 옛 결과가 조용히 그대로 나온다 — 실측으로
+        겪었다. 줄 분리 배율을 새로 넣고 재실행했더니 `1-23 건너뜀
+        (완료됨)` 만 찍히고 옛 PDF 가 나왔다.
+
+        무슨 설정으로 만든 것인지 같이 보면, 이어하기는 살고 함정은 사라진다.
+        """
+        f = self.outdir / ".done"
+        try:
+            return f.read_text(encoding="utf-8").strip() == stamp
+        except OSError:
+            return False
+
+    def mark_done(self, stamp: str = "") -> None:
+        (self.outdir / ".done").write_text(stamp, encoding="utf-8")
 
     def pdf(self) -> Path | None:
         # 최신 파일을 고른다. 알파벳순으로 뽑으면 원본으로 돌린 옛 결과가
@@ -51,6 +68,73 @@ class Chunk:
         f = sorted(self.outdir.glob("*.mono.pdf"),
                    key=lambda p: p.stat().st_mtime, reverse=True)
         return f[0] if f else None
+
+
+# 실행마다 달라지지만 번역 결과는 바꾸지 않는 값들. 표식에 넣으면
+# 이어하기가 죽는다 — 미들웨어 포트는 실행마다 새로 잡히므로, 중단된
+# 번역을 이어가려 해도 매번 표식이 어긋나 처음부터 다시 돈다.
+_VOLATILE = {"--openai-base-url", "--working-dir", "--output", "--pages",
+             "--qps", "--pool-max-workers", "--files"}
+
+
+def settings_stamp(cmd: list[str]) -> str:
+    """엔진 호출 방식의 지문. 이게 바뀌면 끝난 구간도 다시 번역한다."""
+    import hashlib
+    keep, skip = [], False
+    for a in cmd:
+        if skip:
+            skip = False
+            continue
+        if a in _VOLATILE:
+            skip = True
+            continue
+        keep.append(a)
+    return hashlib.sha256("\x00".join(keep).encode()).hexdigest()[:16]
+
+
+def looks_like_slides(doc) -> bool:
+    """발표자료인가 — 쪽이 가로로 넓은가.
+
+    babeldoc 의 `--split-short-lines` 를 켤지 정하는 데 쓴다. 발표자료에서는
+    켜는 것이 옳다. 화살표·목록 항목이 원래 각자 한 줄인데, 켜지 않으면
+    한 덩어리로 합쳐져 `입력↓` 처럼 붙어 버린다.
+
+    교재에 켜면 정반대가 된다. 실측(548쪽 교재)으로 121쪽은 44줄 **전부**가
+    분리 대상이었다 — 이어지는 문단이 줄마다 토막나 문맥 없이 번역된다.
+
+    가르는 신호는 쪽 모양이다. 실측: 발표자료 1.78, 교재 0.78. 내용이 아니라
+    문서 형식의 성질이라 흔들리지 않는다.
+    """
+    try:
+        r = doc[0].rect
+        return bool(r.width > r.height)
+    except Exception:
+        return False
+
+
+def split_factor(src) -> list[str]:
+    """줄 분리 배율 — 발표자료면 높이고, 교재면 babeldoc 기본값에 맡긴다.
+
+    배율은 **쪽 중앙값 줄 너비에 대한 비율**이다. 이보다 좁은 줄만 따로 뗀다.
+
+    기본 0.8 은 아주 짧은 줄만 떼어 목록 항목 대부분을 놓친다. 실측(마지막
+    쪽, 중앙값 199pt · 문턱 160pt):
+
+        135pt  분리됨  '1. Agent != LLM'
+        199pt  안 됨   '2. Agent != Tool Calling'
+        484pt  안 됨   '3. Agent 의 핵심은 ...'
+
+    3.0 이면 다섯 항목이 모두 제자리를 찾는다. 교재에 쓰면 정반대가 된다 —
+    실측(548쪽 교재)으로 121쪽은 44줄 **전부**가 분리 대상이었다.
+    """
+    import pymupdf
+    try:
+        with pymupdf.open(src) as d:
+            if not looks_like_slides(d):
+                return []
+    except Exception:
+        return []
+    return ["--short-line-split-factor", "3.0"]
 
 
 def plan_chunks(first: int, last: int, size: int, root: Path) -> list[Chunk]:
@@ -437,21 +521,19 @@ PARAMETER repeat_penalty 1.05
 '''
 
 
-def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
-                    model: str, proxy_port: int,
-                    prompt_file: Path | None, lang_out: str = "ko-KR",
-                    qps: int = 30, workers: int = 8,
-                    extra: list[str] | None = None) -> bool:
-    """구간 하나를 번역한다. 성공하면 True.
+def babeldoc_cmd(src: Path, work: Path, pages: str, outdir: Path, *,
+                 model: str, proxy_port: int, prompt_file: Path | None,
+                 lang_out: str = "ko-KR", qps: int = 30, workers: int = 8,
+                 extra: list[str] | None = None) -> list[str]:
+    """엔진에 넘길 명령줄. `settings_stamp` 가 이 결과를 지문으로 삼는다.
 
-    lang_out 이 'ko' 면 안 된다. BabelDOC 의 폰트 선택이
-    `if "KR" in lang_code.upper()` 이라서 'KO' 에는 걸리지 않고 라틴 전용
-    폰트로 떨어진다. 반드시 'ko-KR'.
+    조립을 한 곳에 모아 두는 이유는 지문 때문이다. 호출부가 "이 설정으로
+    끝난 구간인가"를 물으려면 실제로 쓸 명령줄과 **같은 것**을 볼 수
+    있어야 한다. 두 벌로 나뉘면 한쪽만 고쳐져 지문이 거짓말을 한다.
     """
-    chunk.outdir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "babeldoc", "--files", str(src),
-        "--pages", chunk.name,
+        "--pages", pages,
         "--lang-in", "en", "--lang-out", lang_out,
         "--openai", "--openai-model", model,
         "--openai-base-url", f"http://127.0.0.1:{proxy_port}/v1",
@@ -469,6 +551,7 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         # 프록시가 산문 여부를 따로 보므로 쓰레기까지 번역하지는 않는다.
         "--min-text-length", "1",
         "--split-short-lines",
+        *split_factor(src),
         "--primary-font-family", "serif",
         "--watermark-output-mode", "no_watermark",
         "--only-include-translated-page",
@@ -482,12 +565,31 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
         # 8개가 빨랐고 공짜라서 맞춘다.
         "--qps", str(qps), "--pool-max-workers", str(workers),
         "--working-dir", str(work / "work"),
-        "--output", str(chunk.outdir),
+        "--output", str(outdir),
     ]
     if prompt_file and prompt_file.exists():
         cmd += ["--custom-system-prompt", prompt_file.read_text(encoding="utf-8")]
     if extra:
         cmd += extra
+    return cmd
+
+
+def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
+                    model: str, proxy_port: int,
+                    prompt_file: Path | None, lang_out: str = "ko-KR",
+                    qps: int = 30, workers: int = 8,
+                    extra: list[str] | None = None) -> bool:
+    """구간 하나를 번역한다. 성공하면 True.
+
+    lang_out 이 'ko' 면 안 된다. BabelDOC 의 폰트 선택이
+    `if "KR" in lang_code.upper()` 이라서 'KO' 에는 걸리지 않고 라틴 전용
+    폰트로 떨어진다. 반드시 'ko-KR'.
+    """
+    chunk.outdir.mkdir(parents=True, exist_ok=True)
+    cmd = babeldoc_cmd(src, work, chunk.name, chunk.outdir, model=model,
+                       proxy_port=proxy_port, prompt_file=prompt_file,
+                       lang_out=lang_out, qps=qps, workers=workers,
+                       extra=extra)
     # NOTE: --max-pages-per-part 는 쓰지 않는다. 번역 시작 직후
     # "Error in part 0" 로 즉시 죽는 문서가 있다.
 
@@ -516,7 +618,7 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
     judged, empty = qa.coverage(str(f))
     if judged and len(empty) == judged:
         return False
-    chunk.mark_done()
+    chunk.mark_done(settings_stamp(cmd))
     return True
 
 
