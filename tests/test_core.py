@@ -980,7 +980,10 @@ def test_the_leftover_sentence_is_quoted_back_to_the_model():
            "expected return starting from that state. 이를 가치라 한다.")
     src = ("A policy maps states to actions. The value of a state is the "
            "expected return starting from that state. We call this the value.")
-    hint = proxy.repair_hint([{"id": 7, "input": src}],
+    ok, why = proxy.check([{"id": 7, "input": src}], [{"id": 7, "output": tgt}])
+    assert not ok and why.kind == "english", why
+    # 사유를 그대로 넘긴다 — 힌트가 판정을 다시 추론하지 않는다.
+    hint = proxy.repair_hint([({"id": 7, "input": src}, why)],
                              [{"id": 7, "output": tgt}])
     assert "The value of a state" in hint, hint
 
@@ -1273,3 +1276,40 @@ def test_with_nothing_to_reuse_a_glossary_is_built(tmp_path):
     """아무것도 없으면 이 문서에서 뽑는다 — 기본 동작."""
     from pdfko.web import glossary_plan
     assert glossary_plan(None, tmp_path / "없음.csv", disabled=False) == (None, True)
+
+
+# ── 판정 사유가 종류를 들고 다닌다 ───────────────────────────────────────
+def _verdict(src, tgt):
+    return proxy.check([{"id": 0, "input": src}], [{"id": 0, "output": tgt}])
+
+
+@pytest.mark.parametrize("kind,src,tgt", [
+    ("empty",       "A policy maps states to actions.", "   "),
+    ("placeholder", "The step size {v1} matters a lot here.", "스텝 크기가 중요하다."),
+    ("jondae",      "A policy maps states to actions.", "정책은 상태를 행동으로 사상합니다."),
+    ("hangul",      "A policy maps states to actions.", "a policy maps states"),
+    ("width",       "What is RL (with other domains)?",
+                    "RL이란 무엇인가 (다른 분야와의 연계를 포함하여)?"),
+])
+def test_the_checker_names_the_kind_of_failure(kind, src, tgt):
+    """사유는 문자열이면서 **종류**를 따로 들고 있어야 한다.
+
+    예전에는 사람이 읽을 문자열뿐이었고, 사다리는 그마저 `[0]` 으로 버렸다.
+    그래서 `repair_hint` 가 같은 판정을 처음부터 다시 추론했고, 두 곳이
+    어긋나면 엉뚱한 힌트가 나갔다. 오늘 버그 셋이 전부 그 틈에서 나왔다.
+    """
+    ok, why = _verdict(src, tgt)
+    assert not ok, f"거부됐어야 한다: {tgt!r}"
+    assert getattr(why, "kind", None) == kind, (kind, why, getattr(why, "kind", None))
+
+
+def test_a_reason_is_still_an_ordinary_string():
+    """기존 호출자는 그대로 둔다 — 사유에 부분 문자열 검사를 걸고 있다."""
+    ok, why = _verdict("A policy maps states to actions.", "   ")
+    assert isinstance(why, str) and "empty" in why
+
+
+def test_a_passing_item_has_no_reason():
+    ok, why = _verdict("A policy maps states to actions.",
+                       "정책은 상태를 행동으로 사상하는 함수이다.")
+    assert ok and not why

@@ -399,35 +399,59 @@ def leftover_english(tgt: str) -> str | None:
     return None
 
 
+class Reason(str):
+    """실패 사유. 사람이 읽는 문자열이면서 **종류**를 따로 들고 있다.
+
+    예전에는 문자열뿐이었고, 사다리는 `check(...)[0]` 으로 그마저 버렸다.
+    그래서 `repair_hint` 가 같은 판정을 처음부터 다시 추론했다 — 자리표시자를
+    다시 비교하고, 폭을 다시 재고, 영어를 다시 찾았다. 판정하는 곳과 이유를
+    대는 곳이 둘로 갈라져 있으니 어긋날 수 있었고, 실제로 어긋났다:
+
+        check 의 사유          repair_hint 의 추측      결과
+        empty output      →   자리표시자 문제      →   3차까지 헛돌고 영어 잔존
+        hangul 0.00 (URL) →   자리표시자 문제      →   URL 에 {vN} 이 박힘
+
+    종류를 실어 보내면 힌트가 판정과 어긋나는 일이 구조적으로 불가능해진다.
+    `str` 을 상속하므로 기존 호출자(부분 문자열 검사)는 그대로 쓸 수 있다.
+    """
+
+    kind: str
+
+    def __new__(cls, kind: str, text: str) -> "Reason":
+        o = super().__new__(cls, text)
+        o.kind = kind
+        return o
+
+
 def check(items: list[dict], out: list | None) -> tuple[bool, str]:
     """응답 배열이 입력 배열과 정합한지 항목별로 본다."""
     if out is None:
-        return False, "not JSON"
+        return False, Reason("json", "not JSON")
     if len(out) != len(items):
-        return False, f"length {len(out)} != {len(items)}"
+        return False, Reason("length", f"length {len(out)} != {len(items)}")
 
     by_id = {}
     for o in out:
         if not isinstance(o, dict) or "id" not in o:
-            return False, "item missing id"
+            return False, Reason("id", "item missing id")
         by_id[str(o["id"])] = o
 
     for it in items:
         iid = str(it.get("id"))
         o = by_id.get(iid)
         if o is None:
-            return False, f"id {iid} missing"
+            return False, Reason("id", f"id {iid} missing")
 
         tgt = item_output(o)
         if not isinstance(tgt, str) or not tgt.strip():
-            return False, f"id {iid} empty output"
+            return False, Reason("empty", f"id {iid} empty output")
         src = it.get("input", "")
 
         # 자리표시자는 개수·종류가 정확히 같아야 한다
         want = sorted(PLACEHOLDER_RE.findall(src))
         got = sorted(PLACEHOLDER_RE.findall(tgt))
         if want != got:
-            return False, f"id {iid} placeholder {want} != {got}"
+            return False, Reason("placeholder", f"id {iid} placeholder {want} != {got}")
 
         # 모델이 태그 괄호를 전각(〈 〉)이나 다른 문자로 바꿔 쓰면 BabelDOC이
         # 태그로 인식하지 못해 `</style〉` 가 본문에 글자 그대로 찍힌다.
@@ -440,7 +464,7 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
         n_style_bracketed = len(_STYLE_NEAR.findall(tgt))
         n_style_tag = len(STYLE_RE.findall(tgt))
         if n_style_bracketed > n_style_tag:
-            return False, f"id {iid} malformed style tag"
+            return False, Reason("style", f"id {iid} malformed style tag")
 
         # <style> 태그는 '경고'까지만 한다.
         # 자리표시자는 수식이라 잃으면 페이지가 깨지지만, style 태그는 이탤릭·볼드
@@ -451,26 +475,26 @@ def check(items: list[dict], out: list | None) -> tuple[bool, str]:
 
         # 문체가 섞이면 안 된다. 지시문에서 금지하지만 새어 나온다.
         if _JONDAE_RE.search(tgt.strip()):
-            return False, f"id {iid} 존댓말"
+            return False, Reason("jondae", f"id {iid} 존댓말")
 
         # 번역할 산문이 있었는데 한글이 없으면 반향이다
         letters = sum(1 for c in src if c.isalpha() and c.isascii())
         if letters >= 12 and hangul_ratio(tgt) < 0.15:
-            return False, f"id {iid} hangul {hangul_ratio(tgt):.2f}"
+            return False, Reason("hangul", f"id {iid} hangul {hangul_ratio(tgt):.2f}")
 
         # 반쪽 번역. 한글 비율만 보면 통과한다 — 80%가 한국어인 문단에 영어
         # 한 문장이 남아도 0.15 바닥을 넘기 때문이다. 실측으로 이 책 3660문단
         # 중 165개(4.5%)가 그 상태였고, 쪽 단위 검사는 "미번역 0쪽"이라고 했다.
         if leftover_english(tgt):
-            return False, f"id {iid} 영어 잔류"
+            return False, Reason("english", f"id {iid} 영어 잔류")
 
         # 길이 폭주. 짧은 라벨과 수식은 면제한다.
         sw = est_width(src)
         if letters >= 12 and sw >= 10:
             ratio = est_width(tgt) / sw
             if ratio > WIDTH_MAX:
-                return False, f"id {iid} width {ratio:.2f}x"
-    return True, ""
+                return False, Reason("width", f"id {iid} width {ratio:.2f}x")
+    return True, Reason("", "")
 
 
 def item_output(o) -> str:
@@ -501,12 +525,17 @@ def item_output(o) -> str:
     return v if isinstance(v, str) else ""
 
 
-def repair_hint(items: list[dict], out: list | None) -> str:
-    """어떤 항목에서 어떤 자리표시자가 빠졌는지 짚어 주는 재시도 지시.
+def repair_hint(failed: list[tuple[dict, str]], out: list | None) -> str:
+    """무엇을 고쳐야 하는지 짚어 주는 재시도 지시.
 
-    수식이 20개 넘게 박힌 문단에서 모델이 몇 개를 흘리는 일이 잦다. 그냥
-    다시 시키면 또 흘리므로, **빠진 토큰을 이름으로 지목**해서 고치게 한다.
+    `failed` 는 `(항목, 사유)` 쌍이고, 사유는 `check()` 가 준 `Reason` 이다.
+    **여기서 판정을 다시 하지 않는다.** 예전에는 사다리가 사유를 버리고
+    (`check(...)[0]`) 이 함수가 처음부터 재추론했다 — 자리표시자를 다시
+    비교하고 폭을 다시 재고 영어를 다시 찾았다. 판정하는 곳과 이유를 대는
+    곳이 갈라져 있으니 어긋날 수 있었고, 실제로 어긋나 엉뚱한 지시가 나갔다.
     """
+    items = [it for it, _ in failed]
+    kinds = {getattr(r, "kind", "") for _, r in failed}
     if not out:
         return ("Your previous reply was not a valid JSON array. "
                 "Reply with ONLY the JSON array, no prose, no ``` fences.")
@@ -537,7 +566,7 @@ def repair_hint(items: list[dict], out: list | None) -> str:
             r = est_width(tgt) / est_width(src)
             if r > WIDTH_MAX:
                 wide.append(f"id {iid}: {r:.1f}x too long")
-    if wide:
+    if "width" in kinds:
         return (
             "Your translation is far longer than the source.\n"
             + "\n".join(wide)
@@ -554,20 +583,20 @@ def repair_hint(items: list[dict], out: list | None) -> str:
         run = leftover_english(item_output(by_id.get(iid)))
         if run:
             half.append(f'id {iid}: still English — "{run[:80]}"')
-    if half:
+    if "english" in kinds:
         return ("You translated part of these items and left the rest in "
                 "English.\n" + "\n".join(half)
                 + "\nRe-translate the WHOLE item into Korean. Keep proper "
                   "nouns, citations and code identifiers as they are, but no "
                   "English sentence may remain.")
 
-    if not lines:
+    if "placeholder" not in kinds:
         # 자리표시자 얘기는 **원문에 실제로 있을 때만** 한다. 없는데 지키라고
         # 하면 모델은 없는 것을 만들어 넣는다. 실측으로 URL 항목이 한글이
         # 없다는 이유로 실패 판정을 받자 이 힌트가 붙었고, 다음 시도에서
         # `https://www.davidsilver.uk/{vN}/` 가 돌아왔다 — 멀쩡한 URL 이
         # 망가진 것이다. 지시가 틀리면 모델은 그 틀린 지시를 정확히 따른다.
-        if any(PLACEHOLDER_RE.search(it.get("input", "")) for it in items):
+        if "placeholder" in kinds:
             return ("Some items were wrong. Re-translate and keep every {vN} "
                     "placeholder exactly once.")
         return ("These items were not translated into Korean. Translate them "
@@ -914,8 +943,10 @@ async def chat(request: Request):
         for it in pending:
             iid = str(it.get("id"))
             cand = item_output(by_id.get(iid)) or None
-            if isinstance(cand, str) and check([it], [{"id": it.get("id"),
-                                                       "output": cand}])[0]:
+            ok, why = ((False, Reason("empty", f"id {iid} empty output"))
+                       if not isinstance(cand, str)
+                       else check([it], [{"id": it.get("id"), "output": cand}]))
+            if ok:
                 results[iid] = cand
                 # 원문과 글자 하나 안 다르면 번역이 아니다. `check` 는 라틴
                 # 문자 12자 미만이면 한글을 요구하지 않으므로 `Chapter Six`
@@ -925,7 +956,7 @@ async def chat(request: Request):
                     cache_put(item_key(it.get("input", "")),
                               it.get("input", ""), cand, attempt)
             else:
-                still.append(it)
+                still.append((it, why))
         if not still:
             pending = []      # 비우지 않으면 아래 조각 구제가 성공 항목까지 덮어쓴다
             break
@@ -934,7 +965,7 @@ async def chat(request: Request):
         log_jsonl("retries.jsonl", {"ts": time.time(), "attempt": attempt,
                                     "why": why, "raw": raw[:400]})
         hint = repair_hint(still, parsed)
-        pending = still
+        pending = [it for it, _ in still]
 
     # (c) 통짜 번역이 3번 다 실패한 항목은 **영어로 버리기 전에 조각 모드**를 태운다.
     #     자리표시자 사이의 본문만 번역하고 자리표시자는 우리가 원위치에 끼우므로

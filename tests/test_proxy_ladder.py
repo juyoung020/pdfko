@@ -305,3 +305,31 @@ def test_placeholder_advice_still_given_when_the_source_has_them(rig):
     up, cli = rig(dropped, dropped, dropped)
     ask(cli, src)
     assert any("{v" in s for s in up.seen[1:]), "자리표시자 지시가 사라졌다"
+
+
+# ── 힌트는 판정 사유를 따른다 ────────────────────────────────────────────
+@pytest.mark.parametrize("src,bad,must_mention", [
+    # 폭 초과 → 짧게 하라고 해야지, 자리표시자 얘기를 하면 안 된다
+    ("What is RL (with other domains)?",
+     "RL이란 무엇인가 (다른 분야와의 연계를 포함하여)?", "long"),
+    # 자리표시자 유실 → 어느 토큰인지 지목
+    ("The step size {v1} controls how fast {v2} changes over time.",
+     "스텝 크기가 변화 속도를 조절한다.", "{v"),
+    # 번역 자체가 안 됨 → 형식·번역 얘기지 자리표시자가 아니다
+    ("A policy maps states to actions in every state.",
+     "a policy maps states to actions", "Korean"),
+])
+def test_the_hint_addresses_the_reason_the_checker_gave(rig, src, bad, must_mention):
+    """힌트는 **판정이 준 사유**를 따라야 한다.
+
+    예전에는 `check()` 가 사유를 알고도 `[0]` 으로 버렸고, `repair_hint` 가
+    같은 판정을 처음부터 다시 추론했다. 두 곳이 어긋나면 엉뚱한 지시가
+    나갔고, 모델은 그 엉뚱한 지시를 정확히 따랐다.
+    """
+    reply = json.dumps([{"id": 0, "output": bad}], ensure_ascii=False)
+    up, cli = rig(reply, reply, reply)
+    ask(cli, src)
+    assert len(up.seen) > 1, "재시도가 없었다"
+    hint_area = up.seen[1][-700:]
+    assert must_mention in hint_area, \
+        f"{must_mention!r} 를 짚지 않았다:\n{hint_area}"
