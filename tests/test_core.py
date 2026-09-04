@@ -1889,3 +1889,163 @@ def test_the_authors_own_korean_must_survive():
                    "{v1}정지 조건으로 에이전트가 완성된다")[0] is True
     # 한국어가 없던 문단은 이 규칙과 무관하다
     assert verdict("Agent Loop", "에이전트 반복")[0] is True
+
+
+def test_width_is_gated_by_word_count_not_by_em_width():
+    """짧은 라벨 면제를 폭으로 재면 칼끝에서 빗나간다.
+
+    실측(L03 12쪽). `Let's address it with` 는 뒤에 ChatGPT 로고가 이어지는
+    **조각**인데, `이를 다음 방법을 통해 다루어 보도록 하자.` 로 끝맺어져
+    1.95배가 됐고 말풍선 밖으로 잘렸다. 폭 검사가 잡았어야 하는데 면제됐다 —
+    원문 폭이 **9.99em** 이고 면제 문턱이 `10em 이상` 이었다. 0.01em 차이다.
+
+    두 문서에서 상한을 넘고도 면제된 항목을 모아 보니 축이 분명했다:
+
+        4낱말  1.95배  'Let's address it with'  → 조각을 문장으로 끝맺음
+        4낱말  1.73배  'can be reduced to'      → 같은 패턴
+        ────────────────────────────────────────────────────
+        3낱말  1.65배  'Workflow or Agent?'     → 올바른 번역
+        3낱말  1.42배  '(no terminal state)'    → 올바른 번역
+
+    짧은 라벨인지는 낱말 수가 말해 준다. 한국어는 짧은 라벨에서 원문보다
+    넓어지는 것이 정상이라 폭으로는 가릴 수 없다.
+    """
+    from pdfko.proxy import too_wide
+
+    assert too_wide("Let’s address it with",
+                    "이를 다음 방법을 통해 다루어 보도록 하자.") is True
+    assert too_wide("can be reduced to", "다음과 같이 단순화될 수 있다.") is True
+
+    # 세 낱말 이하는 면제한다 — 늘어나는 것이 정상이다
+    assert too_wide("Workflow or Agent?", "워크플로우인가, 에이전트인가?") is False
+    assert too_wide("(no terminal state)", "（종료 상태가 존재하지 않음）") is False
+    assert too_wide("Agent Diagram", "에이전트 다이어그램") is False
+    assert too_wide("No", "아니오") is False
+
+
+def test_column_gaps_survive_placeholders():
+    """`=` 가 `{v1}` 로 바뀌어 와도 열 간격을 찾아야 한다.
+
+    실측(L03 12쪽). 원본 span 은 이렇게 생겼다:
+
+        'state:      = {sunny, cloudy} = {1, 2}'
+
+    `state:` 와 `=` 사이 공백 6칸은 그 자리에 따로 그려지는 수식 글리프
+    `𝒮` 의 자리다. 그런데 엔진은 `=` 를 자리표시자로 바꿔 보낸다:
+
+        'state: {v1}{sunny, cloudy} {v2}{1, 2}'
+
+    열 지도에는 그 줄이 **들어 있는데** 열쇠가 안 맞아 간격이 복원되지
+    않았고, 6칸이 한 칸으로 줄어 `𝒮` 와 `=` 가 겹쳐 `=𝒮 sunny…` 로 찍혔다.
+
+    자리표시자를 아무 글자로 보고 맞춘다.
+    """
+    from pdfko.proxy import restore_gaps
+
+    cols = {"state: = {sunny, cloudy} = {1, 2}":
+            ["state:      = {sunny, cloudy} = {1, 2}",
+             "state:      = {sunny, cloudy} = {1, 2}"]}
+    got = restore_gaps("state: {v1}{sunny, cloudy} {v2}{1, 2}", cols)
+    assert got is not None, "자리표시자 때문에 못 찾았다"
+    assert got.startswith("state:      {v1}"), got     # 6칸이 살아났다
+    assert "{v1}" in got and "{v2}" in got             # 자리표시자는 그대로
+
+    # 열쇠에 없는 줄은 건드리지 않는다
+    assert restore_gaps("other: {v1}text", cols) is None
+
+
+def test_a_gap_before_a_placeholder_is_restored_after_translation():
+    """모델이 칸을 없애도, 자리표시자를 기준으로 되살린다.
+
+    실측(L03 12쪽). 열 간격을 넣어 보냈는데 모델이 도로 없앴다:
+
+        보낸 것  'state:      {v1}{sunny, cloudy} {v2}{1, 2}'
+        받은 것  '상태: {v1}{sunny, cloudy} {v2}{1, 2}'
+
+    그 6칸은 그 자리에 따로 그려지는 수식 글리프 `𝒮` 의 자리다. 없어지면
+    `𝒮` 와 `=` 가 겹쳐 `=𝒮 sunny…` 로 찍힌다.
+
+    칸 뒤에 자리표시자가 오는 모양이면 기준점이 확실하다 — 자리표시자는
+    번역을 거쳐도 그대로 남는다(그러라고 검사까지 건다). 목표문에서 같은
+    자리표시자를 찾아 그 앞에 칸을 되돌린다.
+    """
+    from pdfko.proxy import restore_placeholder_gaps
+
+    got = restore_placeholder_gaps(
+        "state:      {v1}{sunny, cloudy} {v2}{1, 2}",
+        "상태: {v1}{sunny, cloudy} {v2}{1, 2}")
+    assert got == "상태:      {v1}{sunny, cloudy} {v2}{1, 2}", got
+
+    # 서식 태그가 끼어 있어도 자리표시자만 있으면 된다
+    got = restore_placeholder_gaps(
+        "<style id='1'>state</style>:      {v3}x",
+        "<style id='1'>상태</style>: {v3}x")
+    assert "      {v3}" in got, got
+
+    # 손대면 안 되는 경우
+    assert restore_placeholder_gaps("plain text", "평범한 글") == "평범한 글"
+    assert restore_placeholder_gaps("a      b", "가 나") == "가 나"   # 칸 뒤가 자리표시자가 아니다
+    assert restore_placeholder_gaps("a      {v1}", "가 나") == "가 나"  # 목표에 자리표시자가 없다
+
+
+def test_placeholder_gaps_are_found_through_style_tags():
+    """서식 태그가 붙어 와도 자리표시자 앞의 칸을 찾아야 한다.
+
+    실측(L03 9쪽). 원본 span 은 `'state:              = {sunny, cloudy} …'`
+    이고 그 14칸에 수식 글리프 `S_t ∈ 𝒮` 가 그려진다. 엔진은 이렇게 보낸다:
+
+        "<style id='1'>state</style>: {v3}{sunny, cloudy} {v4}…"
+
+    태그 때문에 열쇠가 안 맞아 칸이 복원되지 않았고, `{맑음, 흐림}` 이
+    수식 자리(x=437..525)로 밀려들어 겹쳐 찍혔다 — 글자가 사라진 것이
+    아니라 가려진 것이다.
+
+    태그를 걷어내고 자리표시자를 아무 글자로 보아 열쇠를 찾은 뒤, **어느
+    자리표시자 앞에 몇 칸이 필요한지**를 돌려준다. 태그를 가로질러 조각을
+    찾을 필요가 없어진다.
+    """
+    from pdfko.proxy import placeholder_gaps
+
+    cols = {"state: = {sunny, cloudy} = {1, 2}":
+            ["state:      = {sunny, cloudy} = {1, 2}"] * 2}
+    tagged = ("<style id='1'>state</style>: {v3}{sunny, cloudy} "
+              "{v4}<style id='5'>{1, 2}</style>")
+    assert placeholder_gaps(tagged, cols) == [("{v3}", 6)]
+
+    # 태그가 없어도 같은 답
+    plain = "state: {v1}{sunny, cloudy} {v2}{1, 2}"
+    assert placeholder_gaps(plain, cols) == [("{v1}", 6)]
+
+    # 열쇠에 없으면 빈 목록
+    assert placeholder_gaps("other: {v1}x", cols) == []
+
+
+def test_a_repeated_column_key_keeps_the_widest_gap():
+    """같은 열쇠가 서로 다른 칸으로 두 번 나오면 넓은 쪽을 남긴다.
+
+    실측(L03). 9쪽은 14칸, 12쪽은 6칸인데 공백을 뭉개면 열쇠가 같아진다.
+    좁은 쪽을 남기면 넓은 쪽에서 글자가 수식 위로 밀려 겹친다. 넓은 쪽을
+    남기면 좁은 쪽이 조금 벌어질 뿐이다 — 겹치는 것보다 낫다.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import pymupdf
+    from pdfko.cli import build_columns
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "a.pdf"
+        doc = pymupdf.open()
+        p1 = doc.new_page(width=600, height=200)
+        p1.insert_text((40, 80), "state:      = {a, b}", fontname="cour", fontsize=11)
+        p2 = doc.new_page(width=600, height=200)
+        p2.insert_text((40, 80), "state:              = {a, b}", fontname="cour", fontsize=11)
+        doc.save(src); doc.close()
+        out = Path(d) / "c.json"
+        build_columns(src, out)
+        cols = json.loads(out.read_text(encoding="utf-8"))
+
+    import re
+    send = cols["state: = {a, b}"][0]
+    assert max(len(g) for g in re.findall(r"  +", send)) == 14, send

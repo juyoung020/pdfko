@@ -561,9 +561,27 @@ def too_wide(src: str, tgt: str) -> bool:
 
     짧은 라벨과 산문 없는 항목(URL·수식)은 면제한다 — 자리가 모자라 글자가
     겹치는 것은 본문이 길 때 생기는 일이다.
+
+    짧은 라벨인지는 **낱말 수**로 가린다. 예전에는 폭(`10em 이상`)으로
+    쟀는데 칼끝에서 빗나갔다 — 실측(L03 12쪽)에서 `Let's address it with`
+    는 9.99em 이라 면제됐고, `이를 다음 방법을 통해 다루어 보도록 하자.` 로
+    끝맺어져 1.95배가 된 채 말풍선 밖으로 잘렸다. 0.01em 차이였다.
+
+    두 문서에서 상한을 넘고도 면제된 항목을 모으니 축이 분명했다:
+
+        4낱말  1.95배  "Let's address it with"  조각을 문장으로 끝맺음
+        4낱말  1.73배  'can be reduced to'      같은 패턴
+        ──────────────────────────────────────────────────────
+        3낱말  1.65배  'Workflow or Agent?'     올바른 번역
+        3낱말  1.42배  '(no terminal state)'    올바른 번역
+
+    한국어는 짧은 라벨에서 원문보다 넓어지는 것이 정상이라 폭으로는 못 가른다.
     """
+    body = STYLE_RE.sub(" ", PLACEHOLDER_RE.sub(" ", src or ""))
+    if len(body.split()) < _PHRASE_WORDS:
+        return False
     sw = est_width(src)
-    return has_prose(src) and sw >= 10 and est_width(tgt) / sw > WIDTH_MAX
+    return has_prose(src) and sw > 0 and est_width(tgt) / sw > WIDTH_MAX
 
 
 def truncated_tail(src: str, vocab) -> str | None:
@@ -745,9 +763,96 @@ _MULTISPACE = re.compile(r"\s{3,}")
 
 _SPACE_EM = 0.33          # est_width 가 공백에 매기는 폭
 _PAD_MAX = 15             # 실측: 15칸은 그려지고 21칸은 마침표가 된다
+# 이 낱말 수부터는 라벨이 아니라 구절로 본다 — 폭 검사를 건다.
+_PHRASE_WORDS = 4
 # 서식 태그 한 벌이 감싼 본문. 태그 하나가 곧 한 칸인 줄이 있다.
 _STYLE_CELL = re.compile(
     r"<style\s+id=['\"][^'\"]*['\"]\s*>(.*?)</style>", re.S)
+
+
+_GAP_BEFORE_PH = re.compile(r"(\s{3,})(\{v\d+\})")
+
+
+def placeholder_gaps(src: str, columns) -> list[tuple[str, int]]:
+    """어느 자리표시자 앞에 몇 칸이 필요한지. 해당 없으면 빈 목록.
+
+    실측(L03 9쪽). 원본 span 은 `'state:              = {sunny, cloudy} …'`
+    이고 그 14칸에 수식 글리프 `S_t ∈ 𝒮` 가 그려진다. 엔진은 이렇게 보낸다:
+
+        "<style id='1'>state</style>: {v3}{sunny, cloudy} {v4}…"
+
+    태그 때문에 열쇠가 안 맞아 칸이 복원되지 않았고, `{맑음, 흐림}` 이 수식
+    자리로 밀려들어 겹쳐 찍혔다 — 글자가 사라진 것이 아니라 가려진 것이다.
+
+    태그를 걷어내고 자리표시자를 아무 글자로 보아 열쇠를 찾는다. 자리표시자가
+    무엇을 대신하는지 알아낸 뒤, 원본에서 그 앞에 칸이 있었는지 본다.
+    **자리표시자를 기준점으로 돌려주므로** 태그를 가로질러 조각을 찾을 필요가
+    없다 — 자리표시자는 번역을 거쳐도 그대로 남기 때문이다.
+    """
+    if not columns or not src or "{v" not in src:
+        return []
+    flat = re.sub(r"\s+", " ", STYLE_RE.sub("", src)).strip()
+    names = PLACEHOLDER_RE.findall(flat)
+    if not names:
+        return []
+    pat = re.compile("^" + "(.*?)".join(
+        re.escape(part) for part in PLACEHOLDER_RE.split(flat)) + "$")
+    for key, val in columns.items():
+        m = pat.match(key)
+        if not m:
+            continue
+        spaced = val[0] if isinstance(val, list) else val
+        out, at = [], 0
+        for name, stood_for in zip(names, m.groups()):
+            if not stood_for:
+                continue
+            i = spaced.find(stood_for, at)
+            if i < 0:
+                continue
+            j = i
+            while j > 0 and spaced[j - 1] == " ":
+                j -= 1
+            if i - j >= 3 and j > 0:        # 줄 맨 앞의 들여쓰기는 뺀다
+                out.append((name, i - j))
+            at = i + len(stood_for)
+        return out
+    return []
+
+
+def restore_placeholder_gaps(src: str, tgt: str,
+                             pairs: list[tuple[str, int]] | None = None) -> str:
+    """칸 뒤에 자리표시자가 오는 모양이면, 번역 뒤에 그 칸을 되돌린다.
+
+    실측(L03 12쪽). 열 간격을 넣어 보냈는데 모델이 도로 없앴다:
+
+        보낸 것  'state:      {v1}{sunny, cloudy} {v2}{1, 2}'
+        받은 것  '상태: {v1}{sunny, cloudy} {v2}{1, 2}'
+
+    그 6칸은 그 자리에 따로 그려지는 수식 글리프 `𝒮` 의 자리다. 없어지면
+    `𝒮` 와 `=` 가 겹쳐 `=𝒮 sunny…` 로 찍힌다.
+
+    자리표시자는 번역을 거쳐도 그대로 남는다 — 그러라고 검사까지 건다.
+    그래서 기준점으로 삼기에 확실하다. 목표문에서 같은 자리표시자를 찾아
+    그 앞의 공백을 원본이 잡아 둔 칸으로 갈아 끼운다.
+
+    `align_columns` 로는 안 된다. 그쪽은 칸으로 칸을 세는데, 모델이 칸을
+    없앤 뒤에는 셀 것이 남아 있지 않다.
+    """
+    if not tgt:
+        return tgt
+    if pairs is None:
+        pairs = [(ph, len(gap)) for gap, ph in _GAP_BEFORE_PH.findall(src or "")]
+    for ph, gap in pairs:
+        i = tgt.find(ph)
+        if i < 0:
+            continue
+        j = i
+        while j > 0 and tgt[j - 1] in " \t\u00a0":
+            j -= 1
+        if j == 0:
+            continue                # 줄 맨 앞이면 들여쓰기다 — 손대지 않는다
+        tgt = tgt[:j] + " " * min(gap, _PAD_MAX) + tgt[i:]
+    return tgt
 
 
 def align_columns(src: str, tgt: str) -> str:
@@ -842,7 +947,55 @@ def restore_gaps(src: str, columns) -> str | None:
     # 서식 태그가 붙어 온 줄은 **넓히지 않는다.** 태그 안쪽에 칸을 넣었더니
     # 모델이 그 공백을 떨어뜨려 `낮음높음` 으로 붙어 버렸다(실측 16쪽).
     # 그런 줄은 태그 자체가 이미 칸을 가르므로, 정렬할 때 태그 경계로 잡는다.
-    return _column_form(src, columns, 0)
+    v = _column_form(src, columns, 0)
+    if v is not None:
+        return v
+    return _gaps_through_placeholders(src, columns)
+
+
+def _gaps_through_placeholders(src: str, columns) -> str | None:
+    """자리표시자가 낀 줄의 열 간격을 찾아 되살린다. 없으면 None.
+
+    실측(L03 12쪽). 원본 span 은 `'state:      = {sunny, cloudy} = {1, 2}'`
+    이고, `state:` 와 `=` 사이 공백 6칸은 그 자리에 따로 그려지는 수식
+    글리프 `𝒮` 의 자리다. 그런데 엔진은 `=` 를 자리표시자로 바꿔 보낸다:
+
+        'state: {v1}{sunny, cloudy} {v2}{1, 2}'
+
+    열 지도에 그 줄이 들어 있는데도 열쇠가 안 맞아 간격이 복원되지 않았고,
+    6칸이 한 칸으로 줄어 `𝒮` 와 `=` 가 겹쳐 `=𝒮 sunny…` 로 찍혔다.
+
+    자리표시자를 아무 글자로 보고 맞춘 뒤, 원본이 잡아 둔 칸을 **자리표시자
+    앞뒤 그대로** 되돌린다. 찾은 칸의 앞 조각을 항목에서 못 찾으면 손대지
+    않는다 — 확신이 없으면 두는 쪽이 낫다.
+    """
+    if not columns or not src or "{v" not in src:
+        return None
+    flat = re.sub(r"\s+", " ", src).strip()
+    # 자리표시자를 **먼저** 갈라내고 나머지만 이스케이프한다. 순서를 바꾸면
+    # `{v1}` 이 `\{v1\}` 이 되어 자리표시자로 안 보인다.
+    pat = re.compile("^" + ".*?".join(
+        re.escape(part) for part in PLACEHOLDER_RE.split(flat)) + "$")
+    for key, val in columns.items():
+        if not pat.match(key):
+            continue
+        spaced = val[0] if isinstance(val, list) else val
+        cells = _MULTISPACE.split(spaced.strip())
+        gaps = [len(g) for g in _MULTISPACE.findall(spaced.strip())]
+        out, at = [], 0
+        for cell, gap in zip(cells[:-1], gaps):
+            i = src.find(cell, at)
+            if i < 0:
+                return None            # 앞 조각을 못 찾으면 손대지 않는다
+            e = i + len(cell)
+            j = e
+            while j < len(src) and src[j] in " \t":
+                j += 1
+            out.append(src[at:e] + " " * gap)
+            at = j
+        out.append(src[at:])
+        return "".join(out)
+    return None
 
 
 def true_line(src: str, columns) -> str | None:
@@ -1593,6 +1746,10 @@ async def chat(request: Request):
     def _aligned(it) -> str:
         src = it.get("input", "")
         tgt = keep_edges(src, results.get(str(it.get("id")), src))
+        # 모델이 칸을 없앴어도 자리표시자를 기준으로 먼저 되돌린다.
+        # 열 지도에서 직접 찾으면 서식 태그가 끼어 있어도 걸린다.
+        tgt = restore_placeholder_gaps(
+            src, tgt, placeholder_gaps(src, SOURCE_COLUMNS) or None)
         return align_columns(true_line(src, SOURCE_COLUMNS) or src, tgt)
 
     out_items = [{"id": it.get("id"), "output": _aligned(it)} for it in items]

@@ -143,6 +143,12 @@ def build_vocab(src: Path, out: Path) -> int:
     return len(words)
 
 
+def _widest(line: str) -> int:
+    """그 줄에서 가장 넓은 칸의 칸 수."""
+    g = _MULTISPACE.findall(line)
+    return max((len(x) for x in g), default=0)
+
+
 def build_columns(src: Path, out: Path) -> int:
     """도식의 열 간격을 적어 둔다. → 줄 수
 
@@ -189,8 +195,16 @@ def build_columns(src: Path, out: Path) -> int:
                         # 채움 상한이 막는다.
                         body = t.strip()
                         w = min(len(g) for g in _MULTISPACE.findall(body))
-                        cols[re.sub(r"\s+", " ", body)] = [
-                            _MULTISPACE.sub(" " * w, body), body]
+                        key = re.sub(r"\s+", " ", body)
+                        # 같은 열쇠가 서로 다른 칸으로 두 번 나오면 **넓은
+                        # 쪽**을 남긴다. 실측(L03): 9쪽은 14칸, 12쪽은 6칸인데
+                        # 공백을 뭉개면 열쇠가 같아진다. 좁은 쪽을 남기면
+                        # 넓은 쪽에서 글자가 수식 위로 밀려 겹친다. 넓은 쪽을
+                        # 남기면 좁은 쪽이 조금 벌어질 뿐이다.
+                        old = cols.get(key)
+                        if old and _widest(old[1]) >= _widest(body):
+                            continue
+                        cols[key] = [_MULTISPACE.sub(" " * w, body), body]
     with pymupdf.open(src) as d:
         for pg in d:
             band: dict[int, list[tuple[float, float, float, str]]] = {}
