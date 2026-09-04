@@ -322,7 +322,15 @@ class Server:
 
     def _ollama_pid(self) -> int | None:
         import subprocess as _sp
-        out = _sp.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
+        # `ss` 는 iproute2 — 리눅스에만 있다. 윈도우에서는 여기서
+        # FileNotFoundError 가 터져 **번역이 시작도 못 하고 죽었다.**
+        # 실측으로, 앞선 실행이 남긴 ollama 를 빌려 쓰는 경로에 들어서면
+        # 반드시 이 줄을 밟는다. 못 알아내면 모르는 것이 맞다 —
+        # `model_store` 는 None 을 받으면 조용히 넘어간다.
+        try:
+            out = _sp.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
+        except OSError:
+            return None
         for line in out.splitlines():
             if f":{self.op} " in line and "pid=" in line:
                 try:
