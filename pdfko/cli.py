@@ -613,6 +613,19 @@ def _main(argv: list[str] | None = None) -> int:
         stamp = runner.settings_stamp(runner.babeldoc_cmd(
             src, work, "", work, model=a.model, proxy_port=0,
             prompt_file=a.prompt))
+        # 화면이 없으면(로그로 넘긴 실행) 감시를 아예 띄우지 않는다.
+        # 3시간짜리 실행이면 만 번 넘게 헛되이 물어보게 된다.
+        live = sys.stdout.isatty()
+
+        def show(n: int) -> None:
+            # `\r` 뒤에 **줄 끝까지 지운다**(\x1b[K). 계수기가 다시 잡히면
+            # 수가 작아지는데, 지우지 않으면 앞 줄의 긴 꼬리가 남아
+            # `문단 4개 번역함함` 처럼 찍힌다.
+            try:
+                print(f"\r\x1b[K      문단 {n}개 번역함", end="", flush=True)
+            except Exception:
+                pass              # 출력이 막혀도 감시는 계속 산다
+
         for i, c in enumerate(chunks, 1):
             if c.done(stamp):
                 info(f"[{i}/{len(chunks)}] {c.name} 건너뜀 (완료됨)")
@@ -622,16 +635,6 @@ def _main(argv: list[str] | None = None) -> int:
             # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
             # 아무 소식이 없다. babeldoc 의 진행 표시는 파이프로 넘기면 끝에
             # 한 번만 나와서 못 쓴다 — 실측으로 열한 줄이 0.01초에 몰렸다.
-            # 화면이 없으면(로그로 넘긴 실행) 감시를 아예 띄우지 않는다.
-            # 3시간짜리 실행이면 만 번 넘게 헛되이 물어보게 된다.
-            live = sys.stdout.isatty()
-
-            def show(n: int) -> None:
-                try:
-                    print(f"\r      문단 {n}개 번역함", end="", flush=True)
-                except Exception:
-                    pass          # 출력이 막혀도 감시는 계속 산다
-
             try:
                 ok = runner.with_progress(
                     lambda: runner.proxy_items(srv.pp),
@@ -640,10 +643,14 @@ def _main(argv: list[str] | None = None) -> int:
                         prompt_file=a.prompt),
                     show, watch=live)
             finally:
-                # 예외나 Ctrl-C 로 빠져나가도 진행 줄은 지운다. 안 그러면
-                # `문단 512개 번역함` 이 화면에 박힌 채 다음 줄이 겹쳐 찍힌다.
+                # 예외나 Ctrl-C 로 빠져나가도 진행 줄은 지운다. 여기서 터지면
+                # **원래 예외를 덮으므로** 감싼다 — 파이프가 닫힌 채 Ctrl-C 를
+                # 누르면 BrokenPipeError 가 KeyboardInterrupt 를 밀어낸다.
                 if live:
-                    print("\r" + " " * 34 + "\r", end="", flush=True)
+                    try:
+                        print("\r\x1b[K", end="", flush=True)
+                    except Exception:
+                        pass
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")
