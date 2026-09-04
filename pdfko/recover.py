@@ -186,6 +186,12 @@ def _fragment_note(log_dir: Path) -> list[str]:
     굳는다** — 한국어는 어순이 바뀌는데 수식은 제자리에 남으므로, 수식이
     그것을 설명하는 구절에서 떨어져 나간다. 레이아웃 검사로는 안 잡힌다.
     좌표는 멀쩡하기 때문이다.
+
+    **자리표시자가 둘 이상인 것만 센다.** 조각 모드는 자리표시자가 많아서만
+    쓰이는 게 아니라 짧은 라벨을 구제할 때도 쓰인다. 실측(AI Agent 1주차):
+    58건 중 26건은 자리표시자가 **하나도 없었고**(`Example`, `Agent – Goal`)
+    30건은 하나뿐이었다 — 하나면 앞뒤가 바뀔 것이 없다. 뭉뚱그려 세면 거짓
+    경고가 되어, 읽는 사람이 없는 문제를 찾게 만든다.
     """
     import json as _json
     f = log_dir / "fragments.jsonl"
@@ -197,10 +203,13 @@ def _fragment_note(log_dir: Path) -> list[str]:
             rows.append(_json.loads(line))
         except Exception:
             continue
+    import re as _re
+    rows = [r for r in rows
+            if len(_re.findall(r"\{v\d+\}", r.get("src", ""))) >= 2]
     if not rows:
         return []
     out = ["## 어순이 고정된 문단", "",
-           f"자리표시자가 많아 **조각 단위로 번역한 문단이 {len(rows)}개** 있습니다. "
+           f"수식이 둘 이상 든 문단 **{len(rows)}개**를 조각 단위로 번역했습니다. "
            "수식은 제자리에 남고 그 사이 본문만 한국어가 되므로, 수식이 그것을 "
            "설명하는 구절에서 떨어져 보일 수 있습니다. 레이아웃 검사로는 "
            "잡히지 않습니다 — 글자 위치는 멀쩡하기 때문입니다.", ""]

@@ -535,13 +535,16 @@ def test_fragment_mode_is_reported_not_just_counted(tmp_path):
     떨어져 나간다. 품질 검증이 "수식 어긋남의 85%가 여기서 나온다" 고
     지목한 곳인데, 세기만 하고 보고서는 침묵하면서 "파손 0쪽" 이라고
     말하고 있었다. 레이아웃 검사로는 안 잡힌다 — 좌표는 멀쩡하기 때문이다.
+
+    자리표시자가 **둘 이상**인 문단만 센다([[어순이 실제로 굳는 자리]]).
     """
     import json
     from pdfko import qa, recover
     logs = tmp_path / "logs"
     logs.mkdir()
     (logs / "fragments.jsonl").write_text(
-        "\n".join(json.dumps({"why": "heavy", "src": f"{{v1}}term {i}"})
+        "\n".join(json.dumps({"why": "heavy",
+                              "src": f"{{v1}}term {i} and {{v2}}rest"})
                   for i in range(3)) + "\n", encoding="utf-8")
     rep = tmp_path / "r.md"
     recover.write_report(rep, [qa.PageVerdict(page=1, words=100)], [], 0,
@@ -2119,3 +2122,50 @@ def test_a_ligature_broken_at_the_end_of_a_word():
     # 사전에 없는 조합은 절대 건드리지 않는다 — 진짜 수식이다
     for math in ("G{v1}. x", "TD({v3}). y", "w{v2}, z"):
         assert glyphmap.dissolve(math, t) == (math, 0), math
+
+
+# ── 보고서는 실제로 문제가 되는 것만 말해야 한다 ────────────────────────
+def test_the_report_only_warns_where_word_order_can_actually_break():
+    """자리표시자가 없는 문단을 '어순이 고정됐다'고 알리면 안 된다.
+
+    실측(AI Agent 1주차). 보고서가 `조각 단위로 번역한 문단이 58개` 라고
+    했는데, 뜯어 보니 이랬다:
+
+        26건  자리표시자 0개   ← 어순과 아무 상관이 없다
+        30건  자리표시자 1개   ← 하나뿐이면 앞뒤가 바뀔 것이 없다
+         2건  자리표시자 2개   ← 같은 항목이 두 번, 그나마 쉼표 목록
+
+    조각 모드는 자리표시자가 많아서만 쓰이는 게 아니라 **짧은 라벨을
+    구제할 때도** 쓰인다(`Example`, `Agent – Goal`). 그걸 뭉뚱그려 세니
+    거짓 경고가 됐고, 읽는 사람이 없는 문제를 찾게 만든다.
+
+    어순이 실제로 굳는 것은 **자리표시자가 둘 이상인 문단**뿐이다.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from pdfko.recover import _fragment_note
+
+    with tempfile.TemporaryDirectory() as d:
+        log = Path(d)
+        log.joinpath("fragments.jsonl").write_text("\n".join(
+            json.dumps({"ts": 0, "why": "rescue", "src": s}, ensure_ascii=False)
+            for s in ("Example",
+                      "Agent – Goal",
+                      "{v1}Agent 후보",
+                      "search(query), open{v1}document(id), run{v2}pytho")
+        ), encoding="utf-8")
+        note = "\n".join(_fragment_note(log))
+
+    assert "1개" in note, note              # 셋은 빼고 하나만 센다
+    assert "58" not in note
+    assert "search(query)" in note          # 진짜 그 항목을 보여 준다
+    assert "Example" not in note            # 자리표시자 없는 것은 싣지 않는다
+
+    # 하나도 없으면 절 자체가 없어야 한다
+    with tempfile.TemporaryDirectory() as d:
+        log = Path(d)
+        log.joinpath("fragments.jsonl").write_text(
+            json.dumps({"src": "Example"}), encoding="utf-8")
+        assert _fragment_note(log) == []
