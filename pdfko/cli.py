@@ -318,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     Ctrl-C 는 프록시를 그대로 남겼고, 그 고아들이 `--fresh` 를
     무력화하고 포트 창을 잠식했다.
     """
+    from . import use_safe_output
+    use_safe_output()
     try:
         return _main(argv)
     except KeyboardInterrupt:

@@ -522,6 +522,8 @@ poll();
 
 def main() -> int:
     import uvicorn
+    from . import use_safe_output
+    use_safe_output()
     ROOT.mkdir(parents=True, exist_ok=True)
     url = "http://127.0.0.1:8000"
     print("  pdfko 웹 화면:  " + url)

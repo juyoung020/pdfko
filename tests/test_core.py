@@ -2358,3 +2358,25 @@ def test_the_warning_names_only_the_pages_actually_opened(tmp_path, capsys):
     said = capsys.readouterr().out
     assert "10-49" in said, said          # 실제로 연 쪽만 말한다
     assert "10-60" not in said, said
+# ── 출력 인코딩 ──────────────────────────────────────────────────────────
+def test_output_survives_a_codepage_without_the_em_dash():
+    """`—` 한 글자에 번역 전체가 죽던 것을 다시 잡는다.
+
+    한국어 윈도우의 cp949 에는 U+2014 가 없다. 안내 문구 27줄에 그 글자가
+    들어 있어서, 1283쪽 교재가 사전 점검 단계 진행률 0% 에서 죽었다.
+    세 시간짜리 작업이 안내 한 줄 때문에 시작도 못 했다.
+    """
+    import os
+    import subprocess
+    import sys
+    dash = chr(0x2014)
+    src = ("from pdfko import use_safe_output" + chr(10)
+           + "use_safe_output()" + chr(10)
+           + "print(chr(0x2014) + ' 청소본을 씁니다')" + chr(10))
+    r = subprocess.run([sys.executable, "-c", src], capture_output=True,
+                       env={"PYTHONIOENCODING": "cp949",
+                            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")})
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert dash in r.stdout.decode("utf-8", "replace")
+
+
