@@ -2079,3 +2079,43 @@ def test_a_style_tag_with_the_wrong_brackets_is_caught():
     good = "<style id='1'>그림: </style>오프라인 알고리즘"
     assert check([{"id": 0, "input": src, "layout_label": "plain text"}],
                  [{"id": 0, "output": good}])[0] is True
+
+
+# ── 낱말 끝에서 끊긴 합자 ────────────────────────────────────────────────
+def test_a_ligature_broken_at_the_end_of_a_word():
+    """`tradeoff.` 처럼 낱말 끝에서 끊긴 합자도 되돌린다.
+
+    실측(교재 297쪽). 원본 텍스트 레이어에 `tradeo↵.` 가 들어 있는데, 사전은
+    합자 **양쪽에 글자가 있을 때만** 모으고 있었다(`tradeo↵s` → `tradeoffs`).
+    그래서 이 낱말은 사전에 없었고, 자리표시자가 그대로 남아 번역문에
+    `…타협이 수반된다.ff.` 로 `ff` 가 튀어나왔다.
+
+    548쪽 교재에서 이런 자리는 15가지 29회였다 — `Hoff` `Utgoff` `Ratcliff`
+    같은 인용 인명과 `cliff` `tradeoff` `puff` `off`.
+
+    신뢰 모형은 그대로다. 사전은 **원본에서 실제로 본 것만** 담고, 딱 맞는
+    열쇠일 때만 되돌린다.
+    """
+    from pdfko import glyphmap
+
+    # `↵` 는 글꼴에 없는 글자라 시험용 PDF 에 넣으면 `·` 로 바뀐다.
+    # 그래서 글을 훑는 부분(`harvest`)만 따로 시험한다.
+    t = glyphmap.harvest(
+        "involves a tradeo↵. Hereafter\n"
+        "cited by Utgo↵, and by Ho↵(1990) and di↵erent", {})
+    assert t.get("tradeo\x00") == "tradeoff", t
+    assert t.get("Utgo\x00") == "Utgoff"
+    assert t.get("Ho\x00") == "Hoff"
+
+    got, n = glyphmap.dissolve("involves a tradeo{v1}. Hereafter", t)
+    assert got == "involves a tradeoff. Hereafter", got
+    assert n == 1
+
+    # 서식 태그가 끼어 있어도 된다
+    got, _ = glyphmap.dissolve("a <style id='1'>tradeo</style>{v1}. x", t)
+    assert "tradeoff" in got.replace("</style>", "").replace(
+        "<style id='1'>", ""), got
+
+    # 사전에 없는 조합은 절대 건드리지 않는다 — 진짜 수식이다
+    for math in ("G{v1}. x", "TD({v3}). y", "w{v2}, z"):
+        assert glyphmap.dissolve(math, t) == (math, 0), math

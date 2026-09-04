@@ -52,6 +52,16 @@ WEDGE_RE = re.compile(rf"([A-Za-z]+)({_TAGS})(\{{v\d+\}})({_TAGS})(-?[A-Za-z]+)"
 # 원본에서 찾을 손상 합자. repair.py 의 판별과 같은 규칙이다.
 _SRC_RE = re.compile(r"([A-Za-z]+)↵(-?[A-Za-z]+)")
 
+# 합자가 **낱말 끝**에서 끊긴 자리. 오른쪽에 글자가 없다.
+#     'involves a tradeo↵. n should'
+# 양쪽에 글자가 있을 때만 모으면 이런 낱말이 사전에서 빠지고, 번역문에
+# `…타협이 수반된다.ff.` 로 `ff` 가 튀어나온다. 실측(548쪽 교재): 15가지
+# 29회 — `Hoff` `Utgoff` `Ratcliff` 같은 인용 인명과 `cliff` `tradeoff`.
+_SRC_END_RE = re.compile(r"([A-Za-z]+)↵(?![A-Za-z-])")
+
+# 낱말 끝에 놓인 자리표시자. 뒤에 글자가 오면 `WEDGE_RE` 의 몫이다.
+WEDGE_END_RE = re.compile(rf"([A-Za-z]+)({_TAGS})(\{{v\d+\}})(?![A-Za-z-])")
+
 
 def build_table(src_pdf: str | Path, first: int = 1, last: int | None = None
                 ) -> dict[str, str]:
@@ -65,8 +75,22 @@ def build_table(src_pdf: str | Path, first: int = 1, last: int | None = None
     with pymupdf.open(src_pdf) as doc:
         end = min(last or doc.page_count, doc.page_count)
         for i in range(first - 1, end):
-            for left, right in _SRC_RE.findall(doc[i].get_text()):
-                table[f"{left}\x00{right}"] = f"{left}ff{right}"
+            harvest(doc[i].get_text(), table)
+    return table
+
+
+def harvest(text: str, table: dict[str, str]) -> dict[str, str]:
+    """글 한 덩어리에서 손상 합자를 거두어 사전에 넣는다.
+
+    PDF 에서 떼어 둔 이유는 시험 때문이다 — `↵` 는 글꼴에 없는 글자라
+    시험용 PDF 에 넣으면 `·` 로 바뀌어 버린다. 글을 다루는 부분만 따로
+    두면 그 글자를 그대로 시험할 수 있다.
+    """
+    for left, right in _SRC_RE.findall(text):
+        table[f"{left}\x00{right}"] = f"{left}ff{right}"
+    # 오른쪽이 비어 있는 열쇠는 낱말 끝이라는 뜻이다.
+    for left in _SRC_END_RE.findall(text):
+        table.setdefault(f"{left}\x00", f"{left}ff")
     return table
 
 
@@ -126,4 +150,18 @@ def dissolve(text: str, table: dict[str, str]) -> tuple[str, int]:
                     return fixed()
         return m.group(0)
 
-    return WEDGE_RE.sub(sub, text), removed
+    def sub_end(m: re.Match) -> str:
+        """낱말 끝의 자리표시자. 딱 맞는 열쇠일 때만 되돌린다.
+
+        여기서는 **접미사 맞추기를 하지 않는다.** 오른쪽에 글자가 없어
+        단서가 절반뿐이라, 느슨하게 맞추면 진짜 수식 자리표시자를 지운다.
+        """
+        nonlocal removed
+        left, tags = m.group(1), m.group(2)
+        if f"{left}\x00" in table:
+            removed += 1
+            return f"{left}{tags}ff"
+        return m.group(0)
+
+    text = WEDGE_RE.sub(sub, text)
+    return WEDGE_END_RE.sub(sub_end, text), removed
