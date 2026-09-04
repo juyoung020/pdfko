@@ -2049,3 +2049,33 @@ def test_a_repeated_column_key_keeps_the_widest_gap():
     import re
     send = cols["state: = {a, b}"][0]
     assert max(len(g) for g in re.findall(r"  +", send)) == 14, send
+
+
+def test_a_style_tag_with_the_wrong_brackets_is_caught():
+    """모델이 괄호를 바꿔 쓰면 태그가 본문에 그대로 찍힌다.
+
+    실측(교재 299쪽). 모델이 꺾쇠 대신 **중괄호**로 태그를 썼다:
+
+        받은 것  '…이는 오프라인 {style id='14'}-라인 알고리즘의 최적 경우…'
+        찍힌 것  그대로. 독자에게 `{style id='14'}` 가 보인다.
+
+    검사기는 꺾쇠 계열만 보고 있었다(`[<〈＜﹤]`). 괄호 모양이 무엇이든
+    `style` 이 붙어 있으면 태그를 쓰려다 만 것이다.
+    """
+    from pdfko.proxy import check
+
+    src = "<style id='1'>Figure: </style>the off-line algorithm"
+    bad = "<style id='1'>그림: </style>이는 오프라인 {style id='14'}-라인 알고리즘"
+    ok, why = check([{"id": 0, "input": src, "layout_label": "plain text"}],
+                    [{"id": 0, "output": bad}])
+    assert ok is False and why.kind == "style", (ok, why)
+
+    for wrong in ("[style id='2']x", "(style id='2')x", "＜style id='2'＞x"):
+        assert check([{"id": 0, "input": src, "layout_label": "plain text"}],
+                     [{"id": 0, "output": f"<style id='1'>그림: </style>{wrong}"}]
+                     )[0] is False, wrong
+
+    # 제대로 쓴 태그는 통과한다
+    good = "<style id='1'>그림: </style>오프라인 알고리즘"
+    assert check([{"id": 0, "input": src, "layout_label": "plain text"}],
+                 [{"id": 0, "output": good}])[0] is True

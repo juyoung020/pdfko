@@ -167,7 +167,10 @@ PLACEHOLDER_RE = re.compile(r"\{v\d+\}")
 STYLE_RE = re.compile(r"</style>|<style\s+id=['\"][^'\"]*['\"]\s*>")
 # 괄호 비슷한 문자(전각 포함)에 붙어 있는 `style`. 태그를 쓰려다 만 흔적이다.
 # 본문에 그냥 쓰인 낱말 `style` 은 여기 걸리지 않는다.
-_STYLE_NEAR = re.compile(r"[<〈＜﹤]\s*/?\s*style", re.I)
+# 태그를 쓰려다 만 자국. **괄호 모양은 가리지 않는다** — 모델이 꺾쇠 대신
+# 중괄호를 쓰는 일이 있다. 실측(교재 299쪽): `{style id='14'}` 가 본문에
+# 그대로 찍혔다. 꺾쇠만 보던 탓에 검사기를 그냥 지나갔다.
+_STYLE_NEAR = re.compile(r"[<〈＜﹤{\[(（［｛]\s*/?\s*style", re.I)
 LANG_RE = re.compile(r"\bko[-_]KR\b", re.I)
 
 # 존댓말 어미. 지시문에서 금지하는데도 새어 나온다 — 출고본 490쪽에서 8곳,
