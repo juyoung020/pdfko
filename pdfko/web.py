@@ -91,6 +91,17 @@ _lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- 작업 실행
+def _proxy_items(port: int) -> int:
+    """미들웨어가 지금까지 받은 문단 수. 못 물으면 0."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/progress", timeout=2) as r:
+            return int(json.loads(r.read()).get("items", 0))
+    except Exception:
+        return 0
+
+
 def _run(job: Job, pages: str) -> None:
     from . import clipscan, glyphmap, qa, recover, runner
     import pymupdf
@@ -191,40 +202,26 @@ def _run(job: Job, pages: str) -> None:
             if c.done(stamp):
                 job.say("번역", f"{c.name} 건너뜀 (완료됨)", pct)
                 continue
-            job.say("번역", f"{c.name}쪽", pct)
-            # 번역이 도는 동안 미들웨어에 진행을 물어 화면을 살려 둔다.
-            # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
-            # 막대가 멈춰 있는다. babeldoc 의 진행 표시는 파이프로 넘기면
-            # 끝에 한 번만 나와서 못 쓴다.
-            stop = threading.Event()
-            span = 75 / len(chunks)
+            job.say("번역", f"{c.name}쪽  ({i}/{len(chunks)} 구간)", pct)
 
-            def tick(base=pct, chunk=c, width=span) -> None:
-                import urllib.request
-                seen = 0
-                while not stop.wait(1.0):
-                    try:
-                        with urllib.request.urlopen(
-                                f"http://127.0.0.1:{srv.pp}/progress",
-                                timeout=2) as r:
-                            n = json.loads(r.read()).get("items", 0)
-                    except Exception:
-                        continue
-                    if n == seen:
-                        continue
-                    seen = n
-                    # 총 문단 수는 엔진이 문서를 다 뜯어야 알 수 있다.
-                    # 모르는 값을 지어내느니 센 것을 그대로 보여 준다.
-                    job.say("번역", f"{chunk.name}쪽 · 문단 {n}개 번역함", base)
+            def show(n: int, chunk=c, idx=i, base=pct) -> None:
+                """초당 갱신은 **로그에 쌓지 않는다.**
 
-            watch = threading.Thread(target=tick, daemon=True)
-            watch.start()
-            try:
-                ok = runner.translate_chunk(c, src, job.work, model="hy-mt2-7b",
-                                            proxy_port=srv.pp,
-                                            prompt_file=None)
-            finally:
-                stop.set()
+                `say` 는 부를 때마다 한 줄을 남기는데 화면은 마지막 14줄만
+                보여 준다. 초당 부르면 청소·합자·영어 잔존 경고가 14초 만에
+                전부 밀려난다. 진행은 단계 표시에만 쓴다.
+                """
+                job.stage = "번역"
+                job.detail = (f"{chunk.name}쪽  ({idx}/{len(chunks)} 구간) "
+                              f"· 문단 {n}개")
+                job.pct = base
+
+            ok = runner.with_progress(
+                lambda: _proxy_items(srv.pp),
+                lambda: runner.translate_chunk(
+                    c, src, job.work, model="hy-mt2-7b",
+                    proxy_port=srv.pp, prompt_file=None),
+                show)
             if not ok:
                 raise RuntimeError(
                     f"{c.name} 구간 번역 실패 — logs/part_{c.name}.log 를 확인하세요")

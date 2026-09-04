@@ -327,42 +327,15 @@ def dual_path(out: Path) -> Path:
     return out.with_name(f"{stem}_한영대역.pdf")
 
 
-def _with_progress(port: int, run):
-    """번역이 도는 동안 문단 수를 한 줄로 갱신해 보여 준다.
-
-    총 문단 수는 엔진이 문서를 다 뜯어야 알 수 있다. 모르는 값을 지어내
-    가짜 백분율을 그리느니, 실제로 센 것을 그대로 보여 준다.
-    """
+def _proxy_items(port: int) -> int:
+    """미들웨어가 지금까지 받은 문단 수. 못 물으면 0."""
     import json as _json
-    import sys as _sys
-    import threading as _th
     import urllib.request as _u
-
-    stop = _th.Event()
-    live = _sys.stdout.isatty()
-
-    def tick() -> None:
-        seen = 0
-        while not stop.wait(1.0):
-            try:
-                with _u.urlopen(f"http://127.0.0.1:{port}/progress", timeout=2) as r:
-                    n = _json.loads(r.read()).get("items", 0)
-            except Exception:
-                continue
-            if n == seen:
-                continue
-            seen = n
-            if live:
-                print(f"\r      문단 {n}개 번역함", end="", flush=True)
-
-    t = _th.Thread(target=tick, daemon=True)
-    t.start()
     try:
-        return run()
-    finally:
-        stop.set()
-        if live:
-            print("\r" + " " * 34 + "\r", end="", flush=True)
+        with _u.urlopen(f"http://127.0.0.1:{port}/progress", timeout=2) as r:
+            return int(_json.loads(r.read()).get("items", 0))
+    except Exception:
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -660,11 +633,25 @@ def _main(argv: list[str] | None = None) -> int:
             # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
             # 아무 소식이 없다. babeldoc 의 진행 표시는 파이프로 넘기면 끝에
             # 한 번만 나와서 못 쓴다 — 실측으로 열한 줄이 0.01초에 몰렸다.
-            ok = _with_progress(
-                srv.pp,
-                lambda: runner.translate_chunk(
-                    c, src, work, model=a.model, proxy_port=srv.pp,
-                    prompt_file=a.prompt))
+            # 화면이 없으면(로그로 넘긴 경우) 감시를 아예 띄우지 않는다.
+            # 3시간짜리 실행이면 만 번 넘게 헛되이 물어보게 된다.
+            live = sys.stdout.isatty()
+
+            def show(n: int) -> None:
+                try:
+                    print(f"\r      문단 {n}개 번역함", end="", flush=True)
+                except Exception:
+                    pass          # 출력이 막혀도 감시는 계속 산다
+
+            run = lambda: runner.translate_chunk(          # noqa: E731
+                c, src, work, model=a.model, proxy_port=srv.pp,
+                prompt_file=a.prompt)
+            if live:
+                ok = runner.with_progress(
+                    lambda: _proxy_items(srv.pp), run, show)
+                print("\r" + " " * 34 + "\r", end="", flush=True)
+            else:
+                ok = run()
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")
@@ -762,6 +749,10 @@ def _main(argv: list[str] | None = None) -> int:
     step("완료")
     info(f"결과   {out}")
     info(f"보고서 {rep}")
+    # 세 시간 뒤에 보는 요약이다. 대역본을 만들었으면 여기서
+    # 알려야 한다 — 병합 때 찍은 한 줄은 이미 화면 밖으로 밀렸다.
+    if dual_out:
+        info(f"대역본 {dual_out} (원문·번역 나란히)")
     if broken:
         info(f"레이아웃 검사에서 {len(broken)}쪽이 걸렸습니다 — 손대지 않았습니다. "
              f"보고서에서 무엇이 걸렸는지 볼 수 있습니다")

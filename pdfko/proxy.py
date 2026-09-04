@@ -1417,11 +1417,12 @@ async def progress():
     그래서 여기서 센다. 미들웨어는 문단마다 요청을 받으므로 가장 정확한
     실시간 신호다.
     """
+    # 이름은 `STATS` 를 그대로 따른다. `/health` 가 `stats` 를 통째로 내보내는데
+    # 거기 `failures` 는 **묶음** 실패 수다. 같은 이름에 다른 뜻을 담으면
+    # 두 응답을 나란히 놓고도 어느 쪽이 맞는지 알 수 없다.
     return {
         "items": STATS["items"],
-        "cache_hits": STATS["cache_hits"],
-        "retries": STATS["retries"],
-        "failures": STATS["items_failed"],
+        "items_failed": STATS["items_failed"],
     }
 
 

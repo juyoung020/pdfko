@@ -2425,7 +2425,8 @@ def test_the_dual_download_button_is_actually_shown():
     import re
     from pathlib import Path
 
-    src = Path("pdfko/web.py").read_text(encoding="utf-8")
+    src = (Path(__file__).parent.parent / "pdfko" / "web.py"
+           ).read_text(encoding="utf-8")
     assert 'id="dldual"' in src
     assert '"has_dual"' in src
     # 화면에서 실제로 벗기는 줄이 있어야 한다
@@ -2434,33 +2435,38 @@ def test_the_dual_download_button_is_actually_shown():
 
 
 # ── 번역이 도는 동안 진행이 보여야 한다 ─────────────────────────────────
-def test_the_proxy_reports_how_far_along_it_is():
+def test_the_proxy_reports_how_far_along_it_is(tmp_path, monkeypatch):
     """구간이 하나뿐이면 막대가 멈춰 있다 — 문단 수로 알려 준다.
 
     구간은 **속도가 아니라 사고 대비**로 나눈 것이다(500쪽을 한 번에 돌리다
     죽으면 산출물이 0). 기본 40쪽이라 33쪽 문서는 통째로 한 구간이고, 화면은
-    `1-33 (1/1 구간)` 에서 몇 분을 멈춰 있는다.
+    몇 분을 멈춰 있는다.
 
     babeldoc 의 진행 표시는 못 쓴다 — 파이프로 넘기면 **끝에 한 번만** 나온다
-    (실측: 두 줄이 01.98초와 01.99초에 몰려서 나옴).
+    (실측: 열한 줄이 0.01초 안에 몰려서 나옴).
 
-    대신 미들웨어가 문단마다 요청을 받는다. 그게 가장 정확한 실시간 신호다.
+    미들웨어를 진짜 캐시·상류에서 떼어 놓고 센다. 안 그러면 시험이 사용자의
+    캐시 DB 에 쓰고 ollama 를 실제로 부른다.
     """
     from fastapi.testclient import TestClient
     from pdfko import proxy
 
+    monkeypatch.setattr(proxy, "CACHE_DB", tmp_path / "c.db")
+    monkeypatch.setattr(proxy, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(proxy, "_DB", None)
+
     c = TestClient(proxy.app)
     before = c.get("/progress").json()
-    assert "items" in before and "cache_hits" in before
+    assert set(before) == {"items", "items_failed"}, before
 
-    body = ('[\n {\n  "id": 0,\n  "input": "Vector Space",\n'
+    # 상류를 부르지 않는 입력으로 센다 — 계수기만 확인하면 된다.
+    body = ('[\n {\n  "id": 0,\n  "input": "L02",\n'
             '  "layout_label": "plain text"\n }\n]')
-    c.post("/v1/chat/completions",
-           json={"model": "m", "messages": [{"role": "user", "content": body}]})
+    r = c.post("/v1/chat/completions",
+               json={"model": "m", "messages": [{"role": "user", "content": body}]})
+    assert r.status_code == 200
     after = c.get("/progress").json()
     assert after["items"] > before["items"], (before, after)
-
-
 def test_the_dual_file_is_named_after_the_result_not_the_scratch_copy(tmp_path):
     """대역본 이름이 내부 정리본 이름을 따라가면 안 된다.
 
@@ -2474,3 +2480,63 @@ def test_the_dual_file_is_named_after_the_result_not_the_scratch_copy(tmp_path):
     assert dual_path(tmp_path / "live.pdf").name == "live_한영대역.pdf"
     assert dual_path(tmp_path / "책_한국어.pdf").name == "책_한영대역.pdf"
     assert dual_path(tmp_path / "a.pdf").parent == tmp_path
+
+
+# ── 진행 표시가 다른 구간을 침범하지 않는다 ─────────────────────────────
+def test_progress_watcher_stops_before_the_next_chunk_starts():
+    """구간이 끝나면 그 감시 스레드도 끝나야 한다.
+
+    처음 구현은 `stop` 을 바깥 범위에서 읽었고, 그 변수는 구간마다 새 Event
+    로 다시 묶였다. 그래서 1구간의 스레드가 `stop.set()` 을 놓치고 살아남아,
+    2구간이 도는 동안 **1구간의 쪽번호와 낮은 백분율**을 계속 써 넣었다 —
+    막대가 뒤로 간다.
+
+    도우미가 자기 Event 를 들고, 돌아오기 전에 스레드를 거둔다.
+    """
+    import threading
+    import time as _t
+
+    from pdfko.runner import with_progress
+
+    seen, alive = [], []
+
+    def fake_poll() -> int:
+        return len(seen) + 1
+
+    def work() -> str:
+        _t.sleep(0.05)
+        return "ok"
+
+    before = threading.active_count()
+    assert with_progress(fake_poll, work, seen.append, every=0.01) == "ok"
+    _t.sleep(0.05)
+    alive.append(threading.active_count())
+    assert alive[0] <= before, "감시 스레드가 남았다"
+
+
+def test_progress_counts_only_this_chunk():
+    """미들웨어의 계수기는 **누적**이라 그대로 보여 주면 안 된다.
+
+    미들웨어는 앞선 실행에서 이어 쓰는 일이 잦다(캐시가 뜨겁다). 그러면 새
+    구간이 아직 한 문단도 안 했는데 `문단 12483개 번역함` 이 뜬다. 한 실행
+    안에서도 3구간이 1·2구간 몫을 함께 세어 보인다.
+
+    시작할 때의 값을 빼고 **이 구간에서 늘어난 만큼**만 알린다.
+    """
+    from pdfko.runner import with_progress
+
+    counter = {"n": 12483}
+    seen = []
+
+    def poll() -> int:
+        counter["n"] += 5
+        return counter["n"]
+
+    def work() -> None:
+        import time as _t
+        _t.sleep(0.06)
+
+    with_progress(poll, work, seen.append, every=0.01)
+    assert seen, "진행이 한 번도 보고되지 않았다"
+    assert max(seen) < 100, f"누적값이 그대로 새어 나왔다: {seen[:3]}"
+    assert min(seen) > 0

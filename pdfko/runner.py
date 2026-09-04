@@ -655,6 +655,58 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
     return True
 
 
+def with_progress(poll, run, report, every: float = 1.0):
+    """번역이 도는 동안 진행을 알리며 `run()` 을 실행한다.
+
+    `poll()` 은 지금까지 센 값(누적), `report(n)` 은 화면에 뿌리는 자리다.
+
+    ## 왜 한 곳에 두나
+
+    처음에는 cli 와 web 이 같은 것을 따로 썼고, 곧바로 **서로 다르게
+    틀렸다.** web 쪽은 `stop` 을 바깥 범위에서 읽었는데 그 변수가 구간마다
+    새 Event 로 다시 묶여, 1구간의 스레드가 죽지 않고 2구간 위에 1구간의
+    쪽번호와 낮은 백분율을 계속 써 넣었다 — 막대가 뒤로 갔다.
+
+    ## 누적을 그대로 보여 주지 않는다
+
+    미들웨어의 계수기는 프로세스 누적이고, 미들웨어는 앞선 실행에서 이어
+    쓰는 일이 잦다(캐시가 뜨겁다). 그대로 쓰면 새 구간이 아직 한 문단도
+    안 했는데 `문단 12483개` 가 뜬다. 시작할 때 값을 빼고 늘어난 만큼만 낸다.
+
+    ## 반드시 거두고 돌아온다
+
+    `stop.set()` 은 곧바로 돌아오지만 스레드는 응답을 기다리는 중일 수 있다.
+    거두지 않으면 뒤늦게 한 줄을 더 뱉어, 지운 자리에 덧쓰거나 다음 단계
+    표시를 덮는다.
+    """
+    import threading
+
+    stop = threading.Event()
+    try:
+        base = poll() or 0
+    except Exception:
+        base = 0
+
+    def tick() -> None:
+        seen = 0
+        while not stop.wait(every):
+            try:
+                n = (poll() or 0) - base
+                if n > seen:
+                    seen = n
+                    report(n)
+            except Exception:
+                continue
+
+    t = threading.Thread(target=tick, daemon=True)
+    t.start()
+    try:
+        return run()
+    finally:
+        stop.set()
+        t.join(every * 3 + 2.0)
+
+
 def merge(chunks: list[Chunk], out: Path) -> int:
     """구간들을 하나로 합친다. 페이지 수를 돌려준다.
 
