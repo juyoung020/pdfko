@@ -2169,3 +2169,35 @@ def test_the_report_only_warns_where_word_order_can_actually_break():
         log.joinpath("fragments.jsonl").write_text(
             json.dumps({"src": "Example"}), encoding="utf-8")
         assert _fragment_note(log) == []
+
+
+def test_the_item_path_also_skips_items_with_nothing_to_translate():
+    """번역할 게 없는 항목은 **어느 경로로 와도** 보내지 않는다.
+
+    실측(L03 3쪽). 우상단의 강의 번호 `L02` 를 모델에 보냈더니 이렇게
+    돌아왔다:
+
+        'L02'  →  '● Goals'
+
+    같은 묶음에 있던 다른 항목의 내용을 베낀 것이다. 원본에서 `L02` 상자는
+    폭이 20pt 뿐이라 `● Goals` 가 네 줄(`●` `G` `o` `als`)로 접혀 찍혔다.
+
+    `nothing_to_translate` 는 `L02` 를 정확히 걸러 낸다 — 라틴 낱말이
+    `L` 하나뿐이다. 그런데 **평문 경로에만** 걸려 있었고 항목 경로에는
+    없었다. 가드는 판정이 아니라 배선이 빠지면 소용이 없다.
+    """
+    from fastapi.testclient import TestClient
+    from pdfko import proxy
+
+    before = proxy.STATS["nothing_to_translate"]
+    body = ('[\n {\n  "id": 0,\n  "input": "L02",\n'
+            '  "layout_label": "plain text"\n }\n]')
+    r = TestClient(proxy.app).post(
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": body}]})
+    assert r.status_code == 200
+    out = r.json()["choices"][0]["message"]["content"]
+    assert '"L02"' in out, out            # 그대로 돌려준다
+    assert "Goals" not in out
+    # 상류가 죽어 실패-복귀한 것과 구별해야 한다. 가드가 센 것이어야 한다.
+    assert proxy.STATS["nothing_to_translate"] > before

@@ -1445,6 +1445,11 @@ async def chat(request: Request):
         if already_korean(it.get("input", "")):
             results[iid] = it.get("input", "")
             STATS["already_korean"] += 1
+        # 번역할 라틴 낱말이 없으면 보내지 않는다. 보내면 모델이 같은 묶음의
+        # 다른 항목을 베낀다 — 실측(L03 3쪽): `L02` → `● Goals`.
+        elif nothing_to_translate(it.get("input", "")):
+            results[iid] = it.get("input", "")
+            STATS["nothing_to_translate"] += 1
         # 낱말 한가운데서 잘려 온 조각도 보내지 않는다. 번역기에게 `Age` 는
         # 정상 낱말이라 `연령` 으로 옮겨 버린다 — 뒤 조각 `nt` 와 붙어
         # `연령nt` 가 된다.
