@@ -468,6 +468,15 @@ class Server:
         for p in self._procs:
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            except AttributeError:
+                # 윈도우에는 프로세스 그룹이 없어 `os.killpg` 자체가 없다.
+                # 예전에는 그 AttributeError 를 아래 `except Exception` 이
+                # 통째로 삼켜서 **아무것도 죽지 않았다.** ollama 와 프록시가
+                # 고아로 남고, 다음 실행은 그 서버를 빌려 쓰는 경로로 빠진다.
+                # `terminate()` 로는 부족하다 — ollama 는 자식(runner)을
+                # 따로 띄우므로 트리째 끝내야 한다.
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                               capture_output=True)
             except Exception:
                 pass
         for p in self._procs:
