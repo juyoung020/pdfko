@@ -327,17 +327,6 @@ def dual_path(out: Path) -> Path:
     return out.with_name(f"{stem}_한영대역.pdf")
 
 
-def _proxy_items(port: int) -> int:
-    """미들웨어가 지금까지 받은 문단 수. 못 물으면 0."""
-    import json as _json
-    import urllib.request as _u
-    try:
-        with _u.urlopen(f"http://127.0.0.1:{port}/progress", timeout=2) as r:
-            return int(_json.loads(r.read()).get("items", 0))
-    except Exception:
-        return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """어떤 경로로 끝나든 우리가 띄운 서버를 반드시 내린다.
 
@@ -633,7 +622,7 @@ def _main(argv: list[str] | None = None) -> int:
             # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
             # 아무 소식이 없다. babeldoc 의 진행 표시는 파이프로 넘기면 끝에
             # 한 번만 나와서 못 쓴다 — 실측으로 열한 줄이 0.01초에 몰렸다.
-            # 화면이 없으면(로그로 넘긴 경우) 감시를 아예 띄우지 않는다.
+            # 화면이 없으면(로그로 넘긴 실행) 감시를 아예 띄우지 않는다.
             # 3시간짜리 실행이면 만 번 넘게 헛되이 물어보게 된다.
             live = sys.stdout.isatty()
 
@@ -643,15 +632,18 @@ def _main(argv: list[str] | None = None) -> int:
                 except Exception:
                     pass          # 출력이 막혀도 감시는 계속 산다
 
-            run = lambda: runner.translate_chunk(          # noqa: E731
-                c, src, work, model=a.model, proxy_port=srv.pp,
-                prompt_file=a.prompt)
-            if live:
+            try:
                 ok = runner.with_progress(
-                    lambda: _proxy_items(srv.pp), run, show)
-                print("\r" + " " * 34 + "\r", end="", flush=True)
-            else:
-                ok = run()
+                    lambda: runner.proxy_items(srv.pp),
+                    lambda: runner.translate_chunk(
+                        c, src, work, model=a.model, proxy_port=srv.pp,
+                        prompt_file=a.prompt),
+                    show, watch=live)
+            finally:
+                # 예외나 Ctrl-C 로 빠져나가도 진행 줄은 지운다. 안 그러면
+                # `문단 512개 번역함` 이 화면에 박힌 채 다음 줄이 겹쳐 찍힌다.
+                if live:
+                    print("\r" + " " * 34 + "\r", end="", flush=True)
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")

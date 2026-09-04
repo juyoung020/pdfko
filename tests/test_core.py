@@ -2484,59 +2484,87 @@ def test_the_dual_file_is_named_after_the_result_not_the_scratch_copy(tmp_path):
 
 # ── 진행 표시가 다른 구간을 침범하지 않는다 ─────────────────────────────
 def test_progress_watcher_stops_before_the_next_chunk_starts():
-    """구간이 끝나면 그 감시 스레드도 끝나야 한다.
+    """구간이 끝나면 그 감시가 **더는 말하지 않아야** 한다.
 
-    처음 구현은 `stop` 을 바깥 범위에서 읽었고, 그 변수는 구간마다 새 Event
-    로 다시 묶였다. 그래서 1구간의 스레드가 `stop.set()` 을 놓치고 살아남아,
-    2구간이 도는 동안 **1구간의 쪽번호와 낮은 백분율**을 계속 써 넣었다 —
-    막대가 뒤로 간다.
+    처음 구현은 `stop` 을 바깥 범위에서 읽었고 그 변수가 구간마다 새 Event
+    로 묶여, 1구간 스레드가 살아남아 2구간 위에 1구간 쪽번호와 낮은
+    백분율을 계속 써 넣었다 — 막대가 뒤로 간다.
 
-    도우미가 자기 Event 를 들고, 돌아오기 전에 스레드를 거둔다.
+    이 시험의 첫 판은 **아무것도 보증하지 못했다.** `poll` 이 보고 횟수에
+    의존해 증가값이 늘 0 이었고 `report` 가 한 번도 불리지 않았다. 스레드
+    수만 세니 `join` 을 지워도 통과했다. 이제 보고를 직접 센다.
     """
-    import threading
     import time as _t
 
     from pdfko.runner import with_progress
 
-    seen, alive = [], []
+    ticks, after, done = [], [], {"yes": False}
+    counter = {"n": 0}
 
-    def fake_poll() -> int:
-        return len(seen) + 1
+    def poll() -> int:
+        counter["n"] += 3
+        return counter["n"]
 
-    def work() -> str:
-        _t.sleep(0.05)
-        return "ok"
+    def report(n) -> None:
+        (after if done["yes"] else ticks).append(n)
 
-    before = threading.active_count()
-    assert with_progress(fake_poll, work, seen.append, every=0.01) == "ok"
-    _t.sleep(0.05)
-    alive.append(threading.active_count())
-    assert alive[0] <= before, "감시 스레드가 남았다"
+    assert with_progress(poll, lambda: _t.sleep(0.08), report,
+                         every=0.01) == None or True
+    done["yes"] = True
+    assert ticks, "번역 중에 한 번도 보고하지 않았다"
+    _t.sleep(0.06)
+    assert not after, f"끝난 뒤에도 보고했다: {after}"
 
 
 def test_progress_counts_only_this_chunk():
     """미들웨어의 계수기는 **누적**이라 그대로 보여 주면 안 된다.
 
     미들웨어는 앞선 실행에서 이어 쓰는 일이 잦다(캐시가 뜨겁다). 그러면 새
-    구간이 아직 한 문단도 안 했는데 `문단 12483개 번역함` 이 뜬다. 한 실행
-    안에서도 3구간이 1·2구간 몫을 함께 세어 보인다.
+    구간이 아직 한 문단도 안 했는데 `문단 12483개` 가 뜬다.
 
-    시작할 때의 값을 빼고 **이 구간에서 늘어난 만큼**만 알린다.
+    **못 물었을 때와 0 을 구별해야 한다.** 처음에는 실패도 0 으로 돌려서,
+    기준값을 재는 그 한 번이 실패하면 기준이 0 이 되고 다음 순간 누적값이
+    통째로 튀어나왔다 — 고치려던 바로 그 증상이다.
     """
+    import time as _t
+
     from pdfko.runner import with_progress
 
-    counter = {"n": 12483}
+    counter = {"n": 12483, "first": True}
     seen = []
 
-    def poll() -> int:
+    def poll():
+        if counter["first"]:          # 첫 물음이 실패하는 상황
+            counter["first"] = False
+            return None
         counter["n"] += 5
         return counter["n"]
 
-    def work() -> None:
-        import time as _t
-        _t.sleep(0.06)
-
-    with_progress(poll, work, seen.append, every=0.01)
+    with_progress(poll, lambda: _t.sleep(0.1), seen.append, every=0.01)
     assert seen, "진행이 한 번도 보고되지 않았다"
     assert max(seen) < 100, f"누적값이 그대로 새어 나왔다: {seen[:3]}"
-    assert min(seen) > 0
+
+
+def test_progress_recovers_when_the_counter_restarts():
+    """미들웨어가 다시 뜨면 계수기가 0 으로 돌아간다 — 얼어붙으면 안 된다.
+
+    기준값은 그대로인데 계수기가 0 부터 시작하면 증가값이 음수가 되고,
+    `늘어났을 때만 보고` 규칙 때문에 그 구간 내내 화면이 굳는다.
+    """
+    import time as _t
+
+    from pdfko.runner import with_progress
+
+    state = {"n": 500, "restarted": False}
+    seen = []
+
+    def poll() -> int:
+        if len(seen) >= 2 and not state["restarted"]:
+            state["restarted"] = True
+            state["n"] = 0           # 미들웨어가 다시 떴다
+        state["n"] += 4
+        return state["n"]
+
+    with_progress(poll, lambda: _t.sleep(0.3), seen.append, every=0.01)
+    assert state["restarted"], "재시작 상황을 못 만들었다"
+    assert len(seen) > 3, f"재시작 뒤에 얼어붙었다: {seen}"

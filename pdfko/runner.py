@@ -655,46 +655,78 @@ def translate_chunk(chunk: Chunk, src: Path, work: Path, *,
     return True
 
 
-def with_progress(poll, run, report, every: float = 1.0):
+def proxy_items(port: int) -> int | None:
+    """미들웨어가 지금까지 받은 문단 수. **못 물으면 None.**
+
+    0 을 돌려주면 안 된다. "못 물었다"와 "정말 0"을 구별할 수 없어서,
+    기준값을 재는 그 한 번이 실패하면 기준이 0 이 되고 다음 순간 누적값이
+    통째로 화면에 튀어나온다 — 이 도우미가 막으려는 바로 그 증상이다.
+    """
+    import json as _json
+    import urllib.request as _u
+    try:
+        with _u.urlopen(f"http://127.0.0.1:{port}/progress", timeout=2) as r:
+            return int(_json.loads(r.read()).get("items", 0))
+    except Exception:
+        return None
+
+
+def with_progress(poll, run, report, every: float = 1.0, watch: bool = True):
     """번역이 도는 동안 진행을 알리며 `run()` 을 실행한다.
 
-    `poll()` 은 지금까지 센 값(누적), `report(n)` 은 화면에 뿌리는 자리다.
+    `poll()` 은 지금까지 센 값(누적, 못 물으면 None), `report(n)` 은 화면에
+    뿌리는 자리다. `watch=False` 면 아예 띄우지 않는다 — 화면이 없는 실행에서
+    3시간이면 만 번 넘게 헛되이 물어보게 된다.
 
     ## 왜 한 곳에 두나
 
-    처음에는 cli 와 web 이 같은 것을 따로 썼고, 곧바로 **서로 다르게
-    틀렸다.** web 쪽은 `stop` 을 바깥 범위에서 읽었는데 그 변수가 구간마다
-    새 Event 로 다시 묶여, 1구간의 스레드가 죽지 않고 2구간 위에 1구간의
-    쪽번호와 낮은 백분율을 계속 써 넣었다 — 막대가 뒤로 갔다.
+    처음에는 cli 와 web 이 같은 것을 따로 썼고 곧바로 **서로 다르게 틀렸다.**
+    web 쪽은 `stop` 을 바깥 범위에서 읽었는데 그 변수가 구간마다 새 Event 로
+    묶여, 1구간 스레드가 죽지 않고 2구간 위에 1구간의 쪽번호와 낮은 백분율을
+    계속 써 넣었다.
 
     ## 누적을 그대로 보여 주지 않는다
 
     미들웨어의 계수기는 프로세스 누적이고, 미들웨어는 앞선 실행에서 이어
     쓰는 일이 잦다(캐시가 뜨겁다). 그대로 쓰면 새 구간이 아직 한 문단도
-    안 했는데 `문단 12483개` 가 뜬다. 시작할 때 값을 빼고 늘어난 만큼만 낸다.
+    안 했는데 큰 수가 뜬다. 기준값을 빼고 늘어난 만큼만 낸다.
+
+    기준값은 **감시 스레드 안에서** 처음 성공한 물음으로 잡는다. 부르는 쪽에서
+    미리 재면 응답이 늦을 때 그 대기가 번역 시작을 막는다(구간마다 최대 2초).
+
+    ## 계수기가 뒤로 가면 다시 잡는다
+
+    미들웨어가 죽고 다시 뜨면 계수기가 0 부터 시작한다. 기준값이 그대로면
+    증가값이 음수가 되고, `늘어났을 때만` 규칙 때문에 그 구간 내내 화면이
+    굳는다.
 
     ## 반드시 거두고 돌아온다
 
     `stop.set()` 은 곧바로 돌아오지만 스레드는 응답을 기다리는 중일 수 있다.
-    거두지 않으면 뒤늦게 한 줄을 더 뱉어, 지운 자리에 덧쓰거나 다음 단계
+    거두지 않으면 뒤늦게 한 번 더 말해서, 지운 자리에 덧쓰거나 다음 단계
     표시를 덮는다.
     """
     import threading
 
+    if not watch:
+        return run()
+
     stop = threading.Event()
-    try:
-        base = poll() or 0
-    except Exception:
-        base = 0
 
     def tick() -> None:
-        seen = 0
+        base, seen = None, 0
         while not stop.wait(every):
             try:
-                n = (poll() or 0) - base
+                cur = poll()
+                if cur is None:
+                    continue                 # 못 물었다 — 기준을 세우지 않는다
+                if base is None or cur < base:
+                    base, seen = cur, 0      # 처음이거나 계수기가 다시 시작했다
+                    continue
+                n = cur - base
                 if n > seen:
-                    seen = n
-                    report(n)
+                    report(n)                # 보고가 실패하면 `seen` 을 올리지
+                    seen = n                 # 않는다 — 그 몫을 잃지 않으려고.
             except Exception:
                 continue
 

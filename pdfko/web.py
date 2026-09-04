@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import json
 import threading
 import time
 import traceback
@@ -91,17 +90,6 @@ _lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- 작업 실행
-def _proxy_items(port: int) -> int:
-    """미들웨어가 지금까지 받은 문단 수. 못 물으면 0."""
-    import urllib.request
-    try:
-        with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/progress", timeout=2) as r:
-            return int(json.loads(r.read()).get("items", 0))
-    except Exception:
-        return 0
-
-
 def _run(job: Job, pages: str) -> None:
     from . import clipscan, glyphmap, qa, recover, runner
     import pymupdf
@@ -202,9 +190,10 @@ def _run(job: Job, pages: str) -> None:
             if c.done(stamp):
                 job.say("번역", f"{c.name} 건너뜀 (완료됨)", pct)
                 continue
-            job.say("번역", f"{c.name}쪽  ({i}/{len(chunks)} 구간)", pct)
+            label = f"{c.name}쪽  ({i}/{len(chunks)} 구간)"
+            job.say("번역", label, pct)
 
-            def show(n: int, chunk=c, idx=i, base=pct) -> None:
+            def show(n: int, label=label) -> None:
                 """초당 갱신은 **로그에 쌓지 않는다.**
 
                 `say` 는 부를 때마다 한 줄을 남기는데 화면은 마지막 14줄만
@@ -212,12 +201,10 @@ def _run(job: Job, pages: str) -> None:
                 전부 밀려난다. 진행은 단계 표시에만 쓴다.
                 """
                 job.stage = "번역"
-                job.detail = (f"{chunk.name}쪽  ({idx}/{len(chunks)} 구간) "
-                              f"· 문단 {n}개")
-                job.pct = base
+                job.detail = f"{label} · 문단 {n}개"
 
             ok = runner.with_progress(
-                lambda: _proxy_items(srv.pp),
+                lambda: runner.proxy_items(srv.pp),
                 lambda: runner.translate_chunk(
                     c, src, job.work, model="hy-mt2-7b",
                     proxy_port=srv.pp, prompt_file=None),
