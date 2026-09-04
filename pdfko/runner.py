@@ -69,6 +69,15 @@ class Chunk:
                    key=lambda p: p.stat().st_mtime, reverse=True)
         return f[0] if f else None
 
+    def dual(self) -> Path | None:
+        """원문과 번역이 나란히 있는 판. 엔진이 덤으로 내놓는다.
+
+        `pdf()` 와 같은 이유로 최신 것을 고른다.
+        """
+        f = sorted(self.outdir.glob("*.dual.pdf"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+        return f[0] if f else None
+
 
 # 실행마다 달라지지만 번역 결과는 바꾸지 않는 값들. 표식에 넣으면
 # 이어하기가 죽는다 — 미들웨어 포트는 실행마다 새로 잡히므로, 중단된
@@ -704,6 +713,37 @@ def merge(chunks: list[Chunk], out: Path) -> int:
     doc.save(out, garbage=4, deflate=True)
     doc.close()
     return n
+
+
+def merge_dual(chunks: list[Chunk], out: Path) -> int:
+    """대역본(원문·번역 나란히)을 합친다. 쪽수를 돌려준다. 없으면 0.
+
+    번역본과 달리 **이건 덤이다.** 그래서 `merge` 처럼 까다롭게 굴지 않고,
+    한 구간이라도 없으면 조용히 0 을 돌려준다. 대역본을 못 만들었다고
+    세 시간 걸린 번역을 실패로 만들면 안 된다.
+
+    쪽수 검사도 하지 않는다. 엔진이 원문과 번역을 좌우로 놓을 때도 있고
+    번갈아 놓을 때도 있어서, 구간 쪽수와 맞아떨어진다고 보장할 수 없다.
+    번역본 쪽은 `merge` 가 이미 엄격하게 보고 있다.
+    """
+    import pymupdf
+    files = [c.dual() for c in chunks]
+    if not files or not all(files):
+        return 0
+    doc = pymupdf.open()
+    try:
+        for f in files:
+            try:
+                with pymupdf.open(f) as s:
+                    doc.insert_pdf(s)
+            except RuntimeError:
+                return 0          # 덤이다. 읽히지 않으면 없는 셈 친다.
+        n = doc.page_count
+        if n:
+            doc.save(out, garbage=4, deflate=True)
+        return n
+    finally:
+        doc.close()
 
 
 def cleanup_work(work: Path) -> None:

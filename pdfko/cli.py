@@ -311,6 +311,60 @@ def build_columns(src: Path, out: Path) -> int:
     return len(cols)
 
 
+def dual_path(out: Path) -> Path:
+    """대역본 경로. **결과물 이름**을 따라간다.
+
+    예전에는 원본 경로를 따랐는데, 잘라내기를 걷어낸 내부 사본이 `cleaned.pdf`
+    라서 `-o live.pdf` 로 돌려도 `cleaned_한영대역.pdf` 가 나왔다. 사용자가
+    준 적 없는 이름이고, 번역본과 한 쌍으로 보이지도 않는다.
+
+    `_한국어` 로 끝나면 그 자리를 바꾼다 — `책_한국어.pdf` 옆에
+    `책_한국어_한영대역.pdf` 가 아니라 `책_한영대역.pdf` 가 놓인다.
+    """
+    stem = out.stem
+    if stem.endswith("_한국어"):
+        stem = stem[:-len("_한국어")]
+    return out.with_name(f"{stem}_한영대역.pdf")
+
+
+def _with_progress(port: int, run):
+    """번역이 도는 동안 문단 수를 한 줄로 갱신해 보여 준다.
+
+    총 문단 수는 엔진이 문서를 다 뜯어야 알 수 있다. 모르는 값을 지어내
+    가짜 백분율을 그리느니, 실제로 센 것을 그대로 보여 준다.
+    """
+    import json as _json
+    import sys as _sys
+    import threading as _th
+    import urllib.request as _u
+
+    stop = _th.Event()
+    live = _sys.stdout.isatty()
+
+    def tick() -> None:
+        seen = 0
+        while not stop.wait(1.0):
+            try:
+                with _u.urlopen(f"http://127.0.0.1:{port}/progress", timeout=2) as r:
+                    n = _json.loads(r.read()).get("items", 0)
+            except Exception:
+                continue
+            if n == seen:
+                continue
+            seen = n
+            if live:
+                print(f"\r      문단 {n}개 번역함", end="", flush=True)
+
+    t = _th.Thread(target=tick, daemon=True)
+    t.start()
+    try:
+        return run()
+    finally:
+        stop.set()
+        if live:
+            print("\r" + " " * 34 + "\r", end="", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     """어떤 경로로 끝나든 우리가 띄운 서버를 반드시 내린다.
 
@@ -601,10 +655,16 @@ def _main(argv: list[str] | None = None) -> int:
             if c.done(stamp):
                 info(f"[{i}/{len(chunks)}] {c.name} 건너뜀 (완료됨)")
                 continue
-            info(f"[{i}/{len(chunks)}] {c.name} …")
-            ok = runner.translate_chunk(
-                c, src, work, model=a.model, proxy_port=srv.pp,
-                prompt_file=a.prompt)
+            info(f"[{i}/{len(chunks)}] {c.name}쪽 …")
+            # 번역이 도는 동안 미들웨어에 진행을 물어 한 줄로 갱신한다.
+            # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
+            # 아무 소식이 없다. babeldoc 의 진행 표시는 파이프로 넘기면 끝에
+            # 한 번만 나와서 못 쓴다 — 실측으로 열한 줄이 0.01초에 몰렸다.
+            ok = _with_progress(
+                srv.pp,
+                lambda: runner.translate_chunk(
+                    c, src, work, model=a.model, proxy_port=srv.pp,
+                    prompt_file=a.prompt))
             if not ok:
                 warn(f"{c.name} 실패 — logs/part_{c.name}.log 를 확인하세요. "
                      f"같은 명령을 다시 실행하면 여기서부터 이어갑니다.")
@@ -622,6 +682,20 @@ def _main(argv: list[str] | None = None) -> int:
                  "먼저 --recheck 없이 한 번 실행하세요.")
         return 1
     info(f"{n}쪽 → {out.name}")
+
+    # 대역본은 덤이다. 엔진이 이미 구간마다 만들어 두었으니 합치기만 하면
+    # 된다. 실패해도 번역본은 멀쩡하므로 여기서 작업을 죽이지 않는다.
+    dual_out = dual_path(out)
+    try:
+        nd = runner.merge_dual(chunks, dual_out)
+        if nd:
+            info(f"{nd}쪽 → {dual_out.name} (원문·번역 나란히)")
+    except Exception as e:
+        info(f"대역본은 만들지 못했습니다 ({type(e).__name__}) — 번역본은 정상입니다")
+        dual_out = None
+    else:
+        if not nd:
+            dual_out = None
 
     # 번역이 실제로 됐는지부터 본다. 레이아웃 검사는 그다음이다 —
     # 영어 그대로인 페이지는 레이아웃이 완벽하다.

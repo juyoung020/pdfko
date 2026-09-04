@@ -2380,3 +2380,97 @@ def test_output_survives_a_codepage_without_the_em_dash():
     assert dash in r.stdout.decode("utf-8", "replace")
 
 
+
+
+# ── 원문·번역 나란한 대역본 ─────────────────────────────────────────────
+def test_missing_dual_does_not_fail_the_run(tmp_path):
+    """대역본이 없다고 세 시간 걸린 번역을 실패로 만들면 안 된다.
+
+    대역본은 엔진이 덤으로 내놓는 것이다. `merge` 는 한 구간이라도 비면
+    소리 내어 죽어야 맞지만(쪽번호가 어긋난다), 이쪽은 조용히 0 이다.
+    """
+    from pdfko import runner
+    d = tmp_path / "1-2"
+    d.mkdir()
+    c = runner.Chunk(first=1, last=2, outdir=d)
+    assert c.dual() is None
+    assert runner.merge_dual([c], tmp_path / "out.pdf") == 0
+    assert not (tmp_path / "out.pdf").exists()
+
+
+def test_dual_and_mono_are_told_apart(tmp_path):
+    """`*.dual.pdf` 를 번역본으로 착각하면 원문이 절반 섞인 책이 나간다."""
+    import pymupdf
+    from pdfko import runner
+    d = tmp_path / "1-1"
+    d.mkdir()
+    for kind in ("mono", "dual"):
+        doc = pymupdf.open()
+        doc.new_page()
+        doc.save(d / f"book.no_watermark.ko-KR.{kind}.pdf")
+        doc.close()
+    c = runner.Chunk(first=1, last=1, outdir=d)
+    assert c.pdf().name.endswith(".mono.pdf")
+    assert c.dual().name.endswith(".dual.pdf")
+    assert runner.merge_dual([c], tmp_path / "dual.pdf") == 1
+
+
+def test_the_dual_download_button_is_actually_shown():
+    """숨겨 놓고 벗기지 않으면 버튼은 없는 것과 같다.
+
+    되살린 코드에 `<a id="dldual" class="hide">` 와 상태의 `has_dual` 은
+    있었는데, **`hide` 를 벗기는 줄이 없었다.** 서버는 파일을 내줄 준비가
+    끝났는데 화면에는 영영 안 나온다. 사용자는 기능이 없는 줄 안다.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path("pdfko/web.py").read_text(encoding="utf-8")
+    assert 'id="dldual"' in src
+    assert '"has_dual"' in src
+    # 화면에서 실제로 벗기는 줄이 있어야 한다
+    assert re.search(r"dldual'\)\.classList\.toggle\('hide'", src), \
+        "hide 를 벗기는 코드가 없다"
+
+
+# ── 번역이 도는 동안 진행이 보여야 한다 ─────────────────────────────────
+def test_the_proxy_reports_how_far_along_it_is():
+    """구간이 하나뿐이면 막대가 멈춰 있다 — 문단 수로 알려 준다.
+
+    구간은 **속도가 아니라 사고 대비**로 나눈 것이다(500쪽을 한 번에 돌리다
+    죽으면 산출물이 0). 기본 40쪽이라 33쪽 문서는 통째로 한 구간이고, 화면은
+    `1-33 (1/1 구간)` 에서 몇 분을 멈춰 있는다.
+
+    babeldoc 의 진행 표시는 못 쓴다 — 파이프로 넘기면 **끝에 한 번만** 나온다
+    (실측: 두 줄이 01.98초와 01.99초에 몰려서 나옴).
+
+    대신 미들웨어가 문단마다 요청을 받는다. 그게 가장 정확한 실시간 신호다.
+    """
+    from fastapi.testclient import TestClient
+    from pdfko import proxy
+
+    c = TestClient(proxy.app)
+    before = c.get("/progress").json()
+    assert "items" in before and "cache_hits" in before
+
+    body = ('[\n {\n  "id": 0,\n  "input": "Vector Space",\n'
+            '  "layout_label": "plain text"\n }\n]')
+    c.post("/v1/chat/completions",
+           json={"model": "m", "messages": [{"role": "user", "content": body}]})
+    after = c.get("/progress").json()
+    assert after["items"] > before["items"], (before, after)
+
+
+def test_the_dual_file_is_named_after_the_result_not_the_scratch_copy(tmp_path):
+    """대역본 이름이 내부 정리본 이름을 따라가면 안 된다.
+
+    실측: `-o live.pdf` 로 돌렸는데 `cleaned_한영대역.pdf` 가 나왔다.
+    `cleaned.pdf` 는 잘라내기 글자를 걷어내며 만든 **내부 사본**이라 사용자는
+    그런 이름을 준 적이 없다. 번역본은 `live.pdf` 인데 대역본만 딴 이름이라
+    한 쌍으로 보이지 않는다.
+    """
+    from pdfko.cli import dual_path
+
+    assert dual_path(tmp_path / "live.pdf").name == "live_한영대역.pdf"
+    assert dual_path(tmp_path / "책_한국어.pdf").name == "책_한영대역.pdf"
+    assert dual_path(tmp_path / "a.pdf").parent == tmp_path

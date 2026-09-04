@@ -1403,6 +1403,28 @@ def repair_hint(failed: list[tuple[dict, str]], out: list | None) -> str:
 
 
 # ---------------------------------------------------------------- 엔드포인트
+@app.get("/progress")
+async def progress():
+    """번역이 어디까지 왔는지. 화면이 실시간으로 물어 간다.
+
+    구간은 **속도가 아니라 사고 대비**로 나눈 것이다 — 500쪽을 한 번에
+    돌리다 죽으면 산출물이 0이다. 기본 40쪽이라 33쪽 문서는 통째로 한
+    구간이고, 화면은 `1-33 (1/1 구간)` 에서 몇 분을 멈춰 있는다.
+
+    babeldoc 의 진행 표시는 쓸 수 없다. 파이프로 넘기면 **끝에 한 번만**
+    나온다 — 실측으로 열한 줄이 0.01초 안에 몰려서 나왔다.
+
+    그래서 여기서 센다. 미들웨어는 문단마다 요청을 받으므로 가장 정확한
+    실시간 신호다.
+    """
+    return {
+        "items": STATS["items"],
+        "cache_hits": STATS["cache_hits"],
+        "retries": STATS["retries"],
+        "failures": STATS["items_failed"],
+    }
+
+
 @app.get("/health")
 async def health():
     # RULES 를 노출한다. 기동 중인 프록시가 지금 소스와 같은 코드인지

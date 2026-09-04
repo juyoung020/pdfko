@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import json
 import threading
 import time
 import traceback
@@ -47,6 +48,7 @@ class Job:
     src: Path
     work: Path
     out: Path | None = None
+    dual: Path | None = None
     report: Path | None = None
     stage: str = "대기"
     detail: str = ""
@@ -189,16 +191,58 @@ def _run(job: Job, pages: str) -> None:
             if c.done(stamp):
                 job.say("번역", f"{c.name} 건너뜀 (완료됨)", pct)
                 continue
-            job.say("번역", f"{c.name}  ({i}/{len(chunks)} 구간)", pct)
-            if not runner.translate_chunk(c, src, job.work, model="hy-mt2-7b",
-                                          proxy_port=srv.pp,
-                                          prompt_file=None):
+            job.say("번역", f"{c.name}쪽", pct)
+            # 번역이 도는 동안 미들웨어에 진행을 물어 화면을 살려 둔다.
+            # 구간이 하나뿐이면(기본 40쪽이라 흔하다) 이게 없으면 몇 분 동안
+            # 막대가 멈춰 있는다. babeldoc 의 진행 표시는 파이프로 넘기면
+            # 끝에 한 번만 나와서 못 쓴다.
+            stop = threading.Event()
+            span = 75 / len(chunks)
+
+            def tick(base=pct, chunk=c, width=span) -> None:
+                import urllib.request
+                seen = 0
+                while not stop.wait(1.0):
+                    try:
+                        with urllib.request.urlopen(
+                                f"http://127.0.0.1:{srv.pp}/progress",
+                                timeout=2) as r:
+                            n = json.loads(r.read()).get("items", 0)
+                    except Exception:
+                        continue
+                    if n == seen:
+                        continue
+                    seen = n
+                    # 총 문단 수는 엔진이 문서를 다 뜯어야 알 수 있다.
+                    # 모르는 값을 지어내느니 센 것을 그대로 보여 준다.
+                    job.say("번역", f"{chunk.name}쪽 · 문단 {n}개 번역함", base)
+
+            watch = threading.Thread(target=tick, daemon=True)
+            watch.start()
+            try:
+                ok = runner.translate_chunk(c, src, job.work, model="hy-mt2-7b",
+                                            proxy_port=srv.pp,
+                                            prompt_file=None)
+            finally:
+                stop.set()
+            if not ok:
                 raise RuntimeError(
                     f"{c.name} 구간 번역 실패 — logs/part_{c.name}.log 를 확인하세요")
 
         job.say("병합", "", 88)
         out = job.work / f"{job.src.stem}_한국어.pdf"
         n = runner.merge(chunks, out)
+
+        # 덤이다. 못 만들어도 번역본은 그대로 내려받을 수 있어야 한다.
+        # 이름은 결과물을 따라간다 (cli 의 `dual_path` 와 같은 규칙).
+        from .cli import dual_path
+        dual = dual_path(out)
+        try:
+            if runner.merge_dual(chunks, dual):
+                job.dual = dual
+                job.log.append(f"대역본(원문·번역 나란히) {dual.name}")
+        except Exception as e:
+            job.log.append(f"대역본은 만들지 못했습니다 ({type(e).__name__})")
 
         # 번역이 실제로 됐는지부터 본다. 영어 그대로인 페이지는 레이아웃이
         # 완벽하므로 파손 검사만으로는 절대 걸리지 않는다.
@@ -373,6 +417,7 @@ async def status():
         "error": JOB.error, "elapsed": JOB.elapsed,
         "log": JOB.log[-14:],
         "has_out": bool(JOB.out and JOB.out.exists()),
+        "has_dual": bool(JOB.dual and JOB.dual.exists()),
         "has_report": bool(JOB.report and JOB.report.exists()),
     }
 
@@ -382,6 +427,14 @@ async def download():
     if not (JOB and JOB.out and JOB.out.exists()):
         return JSONResponse({"error": "결과가 아직 없습니다"}, status_code=404)
     return FileResponse(JOB.out, filename=JOB.out.name,
+                        media_type="application/pdf")
+
+
+@app.get("/download-dual")
+async def download_dual():
+    if not (JOB and JOB.dual and JOB.dual.exists()):
+        return JSONResponse({"error": "대역본이 없습니다"}, status_code=404)
+    return FileResponse(JOB.dual, filename=JOB.dual.name,
                         media_type="application/pdf")
 
 
@@ -460,6 +513,7 @@ pre{background:color-mix(in srgb,var(--fg) 5%,transparent);border-radius:10px;pa
   <div class="err hide" id="err"></div>
   <div class="dl hide" id="dl">
     <a class="p" href="/download">번역본 내려받기</a>
+    <a class="hide" id="dldual" href="/download-dual">원문·번역 나란히</a>
     <a href="/report">품질 보고서</a>
   </div>
   <pre id="log"></pre>
@@ -510,6 +564,7 @@ async function poll(){
       $('#log').textContent=(s.log||[]).join('\\n');
       $('#err').textContent=s.error||'';$('#err').classList.toggle('hide',!s.error);
       $('#dl').classList.toggle('hide',!s.has_out);
+      $('#dldual').classList.toggle('hide',!s.has_dual);
       document.querySelector('.bar').classList.toggle('bad',!!s.error);
       if(s.done)$('#go').disabled=!picked;
     }
