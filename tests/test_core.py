@@ -752,7 +752,8 @@ def test_version_flag_reports_the_installed_version(capsys):
     assert e.value.code == 0
     got = capsys.readouterr().out.strip()
     want = tomllib.loads(
-        (Path(__file__).parent.parent / "pyproject.toml").read_text()
+        (Path(__file__).parent.parent / "pyproject.toml")
+        .read_text(encoding="utf-8")
     )["project"]["version"]
     assert got == f"pdfko {want}", got
 
