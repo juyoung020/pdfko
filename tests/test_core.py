@@ -842,7 +842,7 @@ def test_a_single_slide_is_not_mistaken_for_a_scan(tmp_path):
     """
     from pdfko.cli import preflight
     src = _slide_pdf(tmp_path / "deck.pdf", 15, 340)
-    _, _, has_text = preflight(src, first=13, last=13)
+    has_text = preflight(src, first=13, last=13).has_text
     assert has_text, "글자가 있는 슬라이드 한 장을 스캔본으로 판정했다"
 
 
@@ -853,7 +853,7 @@ def test_a_real_scan_is_still_refused(tmp_path):
     """
     from pdfko.cli import preflight
     src = _slide_pdf(tmp_path / "scan.pdf", 40, 0)      # 텍스트 레이어 없음
-    _, _, has_text = preflight(src, first=1, last=40)
+    has_text = preflight(src, first=1, last=40).has_text
     assert not has_text, "글자가 하나도 없는 문서를 통과시켰다"
 
 
@@ -861,7 +861,7 @@ def test_the_whole_deck_still_passes(tmp_path):
     """구간을 안 주면 예전처럼 전체를 보고 판정한다."""
     from pdfko.cli import preflight
     src = _slide_pdf(tmp_path / "deck.pdf", 15, 340)
-    _, _, has_text = preflight(src)
+    has_text = preflight(src).has_text
     assert has_text
 
 
@@ -2201,3 +2201,159 @@ def test_the_item_path_also_skips_items_with_nothing_to_translate():
     assert "Goals" not in out
     # 상류가 죽어 실패-복귀한 것과 구별해야 한다. 가드가 센 것이어야 한다.
     assert proxy.STATS["nothing_to_translate"] > before
+
+
+# ── 버려진 미들웨어는 스스로 물러난다 ───────────────────────────────────
+def test_an_abandoned_proxy_gives_up_after_being_idle():
+    """강제 종료된 실행의 미들웨어가 영원히 남으면 안 된다.
+
+    실측. `kill -9` 로 끊은 실행들의 미들웨어가 포트 8100·8101·8102 를 문 채
+    **22시간째** 살아 있었다. 하나에 54MB, 셋이면 164MB 다.
+
+    부모에 묶을 수는 없다. 미들웨어는 다음 실행이 **재사용**하도록 만들어져
+    있고(캐시가 뜨겁게 남아 이어하기가 2~3배 빠르다), 한 부모에 묶으면 그
+    설계가 죽는다. 그래서 시계를 본다.
+
+    문턱은 **기본값 상수**로 시험한다. 환경변수로 읽은 값을 시험하면
+    `PDFKO_IDLE_LIMIT=0` 으로 꺼 둔 사람에게 빨간 시험이 뜬다 — 그 설정은
+    우리 문서가 직접 권하는 것이다.
+    """
+    from pdfko.proxy import DEFAULT_IDLE_LIMIT, should_retire
+
+    assert DEFAULT_IDLE_LIMIT >= 600, "구간 사이 공백보다 넉넉해야 한다"
+    now, limit = 10_000.0, 1800
+    assert should_retire(now - limit - 1, now, limit=limit) is True
+    assert should_retire(now - limit + 1, now, limit=limit) is False
+
+
+def test_a_long_request_is_not_idleness():
+    """요청 하나가 30분을 넘어도 그건 노는 게 아니다.
+
+    한 번의 `/v1/chat/completions` 안에서 상류를 여러 번 부른다 — 무거운
+    항목마다 조각 번역 두 번, 온도를 낮춰 가며 세 번, 그리고 남은 항목마다
+    구제 조각 번역. 각 호출의 상한은 900초다. CPU 로 밀리는 모델에서는 한
+    묶음이 1800초를 쉽게 넘는다.
+
+    시계를 **들어올 때만** 찍으면, 그 사이 감시가 깨어나 번역이 도는 중에
+    프로세스를 죽인다. 처리 중인 요청이 있으면 물러나지 않는다.
+    """
+    from pdfko.proxy import should_retire
+
+    now = 10_000.0
+    long_ago = now - 100_000
+    assert should_retire(long_ago, now, inflight=1, limit=1800) is False
+    assert should_retire(long_ago, now, inflight=0, limit=1800) is True
+
+
+def test_every_request_counts_as_being_used_not_just_translation():
+    """재사용하려고 두드리는 `/health` 도 '쓰이는 중'이다.
+
+    미들웨어를 재사용하는 경로는 이렇다 — 새 실행이 `/health` 를 두드려
+    같은 규칙인지 확인하고, 맞으면 새로 띄우지 않고 그것을 쓴다. 그런데
+    `/health` 가 시계를 갱신하지 않으면, 29분 놀던 미들웨어를 채택한 직후
+    감시가 깨어나 죽인다. 채택과 첫 번역 사이에는 엔진 기동과 레이아웃
+    모델 적재가 있어 1분이 넘게 걸린다.
+
+    그러면 멀쩡한 미들웨어를 물려받은 실행이 `구간 실패` 로 끝난다.
+    """
+    import time
+
+    from fastapi.testclient import TestClient
+    from pdfko import proxy
+
+    proxy._LAST_SEEN = time.time() - 100_000
+    TestClient(proxy.app).get("/health")
+    assert time.time() - proxy._LAST_SEEN < 5, "health 가 시계를 갱신하지 않았다"
+
+
+def test_a_bad_idle_limit_does_not_kill_the_process_at_import():
+    """설정값 오타 하나로 프로세스가 죽으면 안 된다.
+
+    실측: `PDFKO_IDLE_LIMIT=30m` 로 두면 임포트에서 `ValueError` 가 났다.
+    미들웨어의 자식 프로세스가 즉시 죽고, 실행기는 60초를 기다린 뒤
+    `프록시가 뜨지 않았다` 만 말한다 — 진짜 이유는 로그 속 traceback 한 줄이다.
+    `runner.Server` 도 규칙 지문을 구하려고 이 모듈을 임포트하므로, CLI 자체가
+    그 메시지에 닿기 전에 죽을 수 있다.
+    """
+    from pdfko.proxy import DEFAULT_IDLE_LIMIT, _idle_limit
+
+    assert _idle_limit("30m") == DEFAULT_IDLE_LIMIT      # 못 읽으면 기본값
+    assert _idle_limit("") == DEFAULT_IDLE_LIMIT
+    assert _idle_limit(None) == DEFAULT_IDLE_LIMIT
+    assert _idle_limit("-5") == DEFAULT_IDLE_LIMIT       # 음수도 안 받는다
+    assert _idle_limit("0") == 0                          # 끄기는 받는다
+    assert _idle_limit("120") == 120
+
+
+# ── 스캔본과 '그림뿐인 쪽' 을 가려서 말한다 ─────────────────────────────
+def _pdf(path, texts, width=400, height=500):
+    import pymupdf
+    d = pymupdf.open()
+    for t in texts:
+        pg = d.new_page(width=width, height=height)
+        if t:
+            pg.insert_text((40, 100), t, fontsize=11)
+    d.save(path); d.close()
+    return path
+
+
+def test_a_picture_only_page_is_not_a_scanned_document(tmp_path, capsys):
+    """고른 쪽에 글자가 없다고 문서 전체를 스캔본이라 하면 안 된다.
+
+    실측. README 가 새 사용자에게 처음 권하는 것이 `-p` 미리보기인데,
+    15쪽 발표자료의 그림만 있는 5쪽을 고르면 `스캔한 PDF 로 보입니다 /
+    이 도구로 번역할 수 없습니다` 가 나왔다. 두 줄 다 틀렸다 — 14쪽에는
+    글자가 있고 이 도구로 번역된다. 사용자는 도구를 포기하게 된다.
+    """
+    from pdfko.cli import preflight
+
+    body = "The value of a state is defined as the expected return"
+    src = _pdf(tmp_path / "a.pdf", [body, body, "", body])
+
+    v = preflight(src, first=3, last=3)
+    said = capsys.readouterr().out
+    assert v.verdict == "thin-range", v
+    assert "스캔" not in said, said
+
+    v = preflight(_pdf(tmp_path / "b.pdf", ["", "", ""]))
+    assert v.verdict == "scan"
+    assert "스캔" in capsys.readouterr().out
+
+
+def test_the_whole_document_probe_looks_past_the_front_matter(tmp_path, capsys):
+    """앞쪽만 보고 '전체를 돌려보라' 고 하면 스캔본 함정으로 보낸다.
+
+    앞머리(표지·목차)에는 텍스트 레이어가 멀쩡하고 본문은 스캔 이미지인
+    책이 있다. 앞 40쪽만 탐침하면 "글자가 있으니 전체를 돌려보라" 고 하고,
+    사용자가 그대로 하면 몇 시간을 쓰고 영어 PDF 를 받는다 — 이 검사가
+    막으려던 바로 그 결과다.
+
+    탐침은 문서 전체에 **고르게 흩어** 뽑는다.
+    """
+    from pdfko.cli import preflight
+
+    pages = ["Front matter with a real text layer here"] * 6 + [""] * 40
+    src = _pdf(tmp_path / "c.pdf", pages)
+
+    v = preflight(src, first=20, last=40)
+    said = capsys.readouterr().out
+    assert v.verdict == "scan", (v, said)
+    assert "전체를 돌려" not in said and "범위를 지정하지 말고" not in said, said
+
+
+def test_the_warning_names_only_the_pages_actually_opened(tmp_path, capsys):
+    """보지도 않은 쪽을 '글자가 없다' 고 단언하면 안 된다.
+
+    표본은 최대 40쪽이다. `-p 61-560` 이면 61-100 만 열어 보는데, 메시지가
+    `고른 쪽(61-560)` 이라고 하면 460쪽을 열어 보지도 않고 없다고 말하는
+    셈이다. 300쪽에 글자가 있는 사람이 거짓 확신을 듣는다.
+    """
+    from pdfko.cli import preflight
+
+    body = "Real sentences with plenty of words here to pass the bar"
+    # 앞 9쪽과 뒤 14쪽에는 글자가 있고, 10-49쪽만 그림뿐이다.
+    src = _pdf(tmp_path / "d.pdf", [body] * 9 + [""] * 40 + [body] * 14)
+    preflight(src, first=10, last=60)
+    said = capsys.readouterr().out
+    assert "10-49" in said, said          # 실제로 연 쪽만 말한다
+    assert "10-60" not in said, said

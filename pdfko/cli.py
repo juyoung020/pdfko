@@ -14,6 +14,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from . import clipscan, client, glyphmap, paths, qa, recover, runner
 from .repair import looks_damaged
@@ -45,9 +46,42 @@ def warn(s: str) -> None:
 
 
 # ---------------------------------------------------------------- 사전 점검
+class Preflight(NamedTuple):
+    """사전 점검 결과.
+
+    `verdict` 를 함께 돌려주는 이유는 **앞단이 둘**이기 때문이다. 예전에는
+    cli 가 화면에 찍는 문구로만 구분을 표현했고, web 은 그 출력을 통째로
+    버린 뒤 자기 문구를 따로 들고 있었다. 그래서 cli 만 고치면 web 은 옛
+    문구를 계속 말한다 — 실제로 그랬다.
+
+      ''       문제 없음
+      'scan'   문서 전체에 텍스트 레이어가 없다 (스캔본)
+      'thin-range'  고른 쪽에만 글자가 없다 (그림뿐인 쪽)
+    """
+
+    pages: int
+    damaged: bool
+    has_text: bool
+    verdict: str = ""
+
+
+def _spread(n: int, k: int) -> list[int]:
+    """문서 전체에 고르게 흩어 k 쪽을 고른다.
+
+    앞쪽만 보면 안 된다. 앞머리(표지·목차)에는 텍스트 레이어가 멀쩡하고
+    본문은 스캔 이미지인 책이 있다. 앞 40쪽만 탐침하면 "글자가 있으니 전체를
+    돌려보라" 고 하고, 사용자가 그대로 하면 몇 시간을 쓰고 영어 PDF 를
+    받는다 — 이 검사가 막으려던 바로 그 결과다.
+    """
+    if n <= k:
+        return list(range(n))
+    step = n / k
+    return sorted({min(n - 1, int(i * step)) for i in range(k)})
+
+
 def preflight(src: Path, first: int = 1, last: int | None = None
-              ) -> tuple[int, bool, bool]:
-    """PDF 를 열어보고 위험 신호를 미리 알린다. (쪽수, 손상여부, 텍스트있음)
+              ) -> Preflight:
+    """PDF 를 열어보고 위험 신호를 미리 알린다.
 
     표본은 **번역할 구간**에서 뽑는다. 예전에는 무조건 앞 40쪽을 봤는데,
     서지 정보가 멀쩡한 책은 본문이 깨져 있어도 손상 없음으로 판정돼 합자
@@ -74,9 +108,27 @@ def preflight(src: Path, first: int = 1, last: int | None = None
     if len(sample.strip()) < 12.5 * pages:
         # 판정만 하고 그대로 진행하면 500쪽 스캔본에 서너 시간을 쓰고
         # 영어 PDF 를 내놓는다. 여기서 멈춘다.
+        #
+        # 다만 **고른 쪽이 얇은 것**과 **문서가 스캔본인 것**은 다르다.
+        # 실측: 15쪽 발표자료의 그림뿐인 5쪽을 고르면 "스캔한 PDF 라 번역할
+        # 수 없습니다" 가 나왔다 — 14쪽에는 글자가 있는데도. 사용자는 도구를
+        # 포기하거나 없는 문제를 고치려 든다(위 `-p` 문단 참고).
+        if pages < n:
+            probe = _spread(n, 40)
+            with pymupdf.open(src) as d:
+                whole = "".join(d[i].get_text() for i in probe)
+            if len(whole.strip()) >= 12.5 * len(probe):
+                # 본 쪽만 말한다. 표본은 최대 40쪽이라 `-p 61-560` 이어도
+                # 61-100 만 열어 본다. 범위를 통째로 읊으면 460쪽을 열어
+                # 보지도 않고 "글자가 없다" 고 단언하는 셈이다.
+                seen = f"{lo + 1}" + (f"-{hi}" if hi > lo + 1 else "")
+                warn(f"고른 쪽({seen})에는 번역할 글자가 없습니다 — "
+                     f"그림뿐인 쪽입니다.")
+                warn("글자가 있는 다른 쪽을 골라보세요.")
+                return Preflight(n, False, False, "thin-range")
         warn("텍스트 레이어가 거의 없습니다 — 스캔한 PDF 로 보입니다.")
         warn("글자가 이미지인 문서는 이 도구로 번역할 수 없습니다.")
-        return n, False, False
+        return Preflight(n, False, False, "scan")
 
     damaged = looks_damaged(sample)
     if damaged:
@@ -84,7 +136,7 @@ def preflight(src: Path, first: int = 1, last: int | None = None
 
     import shutil as _sh
     if not _sh.which("pdffonts"):
-        return n, damaged, True  # poppler 가 없으면 폰트 점검만 건너뛴다
+        return Preflight(n, damaged, True)  # poppler 없으면 폰트 점검만 건너뛴다
     # 번역할 구간만 본다. 전체에 돌리면 33MB 책에서 3.7초가 매 실행마다
     # 나가는데, 그 결과로 하는 일은 안내 한 줄이다.
     fonts = subprocess.run(
@@ -95,7 +147,7 @@ def preflight(src: Path, first: int = 1, last: int | None = None
                      if len(l.split()) >= 5 and l.split()[-2] == "no")
         if uni_no:
             info(f"ToUnicode 없는 폰트 {uni_no}종 — 추출 텍스트가 깨질 수 있습니다")
-    return n, damaged, True
+    return Preflight(n, damaged, True)
 
 
 # ---------------------------------------------------------------- 본 흐름
@@ -423,8 +475,8 @@ def _main(argv: list[str] | None = None) -> int:
     step("사전 점검")
     # 손상 판정은 **번역할 구간**을 봐야 한다. 문서 앞 40쪽만 표본으로 삼으면,
     # 앞쪽 서지 정보가 멀쩡한 책은 본문이 깨져 있어도 사전 없이 진행한다.
-    _, damaged, has_text = preflight(src, first, last)
-    if not has_text:
+    pre = preflight(src, first, last)
+    if not pre.has_text:
         return 2
     info(f"번역 범위 {first}-{last}쪽")
 

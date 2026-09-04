@@ -117,9 +117,14 @@ def _run(job: Job, pages: str) -> None:
         from .cli import preflight as _preflight
         import io, contextlib
         with contextlib.redirect_stdout(io.StringIO()):
-            _, _damaged, has_text = _preflight(job.src, first, last)
-        if not has_text:
+            pre = _preflight(job.src, first, last)
+        if not pre.has_text:
+            # 판정을 그대로 쓴다. 예전에는 cli 의 출력을 버리고 여기서 문구를
+            # 따로 들고 있어서, cli 만 고치면 web 은 옛 문구를 계속 말했다.
             raise RuntimeError(
+                f"고른 쪽({first}-{last})에는 번역할 글자가 없습니다 — "
+                "그림뿐인 쪽입니다. 글자가 있는 다른 쪽을 골라보세요."
+                if pre.verdict == "thin-range" else
                 "텍스트 레이어가 거의 없습니다 — 스캔한 PDF 로 보입니다. "
                 "글자가 이미지인 문서는 이 도구로 번역할 수 없습니다.")
         job.say("사전 점검", f"{total}쪽 중 {first}-{last} 번역", 4)

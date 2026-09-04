@@ -41,8 +41,10 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -383,7 +385,112 @@ STATS = {"requests": 0, "cache_hits": 0, "retries": 0, "failures": 0,
          "cut_fragment": 0}
 _sampled = 0
 
-app = FastAPI(title="pdfko proxy")
+# 놀고 있는 미들웨어가 스스로 물러나기까지의 시간.
+#
+# 강제 종료된 실행의 미들웨어가 포트를 문 채 **22시간째** 살아 있는 것을
+# 봤다. 하나에 54MB, 셋이면 164MB 다. 부모가 죽어도 알 방법이 없어서다.
+#
+# 부모에 묶을 수는 없다. 미들웨어는 다음 실행이 **재사용**하도록 만들어져
+# 있고(캐시가 뜨겁게 남아 이어하기가 2~3배 빠르다), 한 부모에 묶으면 그
+# 설계가 죽는다. 그래서 시계를 본다.
+#
+# 30분은 구간 사이 공백보다 한참 넉넉하다 — 번역이 도는 동안에는 요청이
+# 끊이지 않고, 구간 사이 엔진 재시작은 몇십 초다.
+DEFAULT_IDLE_LIMIT = 1800
+
+
+def _idle_limit(raw: str | None) -> int:
+    """설정값을 읽되, 못 읽으면 기본값으로 돌아간다.
+
+    `int()` 를 그냥 쓰면 오타 하나로 임포트가 죽는다. 실측:
+    `PDFKO_IDLE_LIMIT=30m` → `ValueError`. 미들웨어의 자식 프로세스가 즉시
+    죽고 실행기는 60초를 기다린 뒤 `프록시가 뜨지 않았다` 만 말한다 —
+    진짜 이유는 로그 속 traceback 한 줄이다. `runner.Server` 도 규칙 지문을
+    구하려고 이 모듈을 임포트하므로 CLI 자체가 그 메시지에 닿기 전에 죽는다.
+    """
+    try:
+        v = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_IDLE_LIMIT
+    return v if v >= 0 else DEFAULT_IDLE_LIMIT
+
+
+IDLE_LIMIT = _idle_limit(os.environ.get("PDFKO_IDLE_LIMIT"))
+_LAST_SEEN = time.time()
+_INFLIGHT = 0
+
+
+def should_retire(last_seen: float, now: float, *, inflight: int = 0,
+                  limit: int | None = None) -> bool:
+    """마지막으로 쓰인 뒤 너무 오래 놀았는가.
+
+    **처리 중인 요청이 있으면 절대 아니다.** 한 번의 요청 안에서 상류를
+    여러 번 부른다 — 무거운 항목마다 조각 번역 두 번, 온도를 낮춰 가며 세 번,
+    남은 항목마다 구제 조각 번역. 각 호출의 상한이 900초라 한 묶음이 30분을
+    쉽게 넘는다. 들어올 때만 시계를 찍으면 번역이 도는 중에 죽는다.
+    """
+    if inflight > 0:
+        return False
+    lim = IDLE_LIMIT if limit is None else limit
+    return lim > 0 and now - last_seen > lim
+
+
+def _retire_when_idle() -> None:
+    """놀고 있으면 스스로 물러난다. 데몬 스레드로 돈다."""
+    while True:
+        time.sleep(60)
+        if should_retire(_LAST_SEEN, time.time(), inflight=_INFLIGHT):
+            idle = int(time.time() - _LAST_SEEN)
+            # 조용히 사라지면 안 된다. 다음 사람이 "왜 캐시가 차가웠지" 를
+            # 로그 한 줄 없이 쫓게 된다 — 이 저장소가 이미 치른 값이다.
+            log_jsonl("proxy_retired.jsonl",
+                      {"ts": time.time(), "idle_seconds": idle,
+                       "limit": IDLE_LIMIT})
+            print(f"pdfko proxy: {idle}초 놀아서 물러납니다 "
+                  f"(PDFKO_IDLE_LIMIT={IDLE_LIMIT})", file=sys.stderr, flush=True)
+            os._exit(0)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """버려진 미들웨어가 영원히 남지 않게 감시를 띄운다.
+
+    `on_event` 는 폐기 예정이라 쓰지 않는다 — 어느 판에서 사라지면 감시가
+    **조용히 안 걸리고** 22시간 고아 문제가 신호 없이 돌아온다. web.py 가
+    이미 쓰는 방식을 그대로 따른다.
+
+    데몬 스레드라 정상 종료를 막지 않는다. `PDFKO_IDLE_LIMIT=0` 이면 끈다.
+    """
+    global _LAST_SEEN
+    _LAST_SEEN = time.time()
+    if IDLE_LIMIT > 0:
+        threading.Thread(target=_retire_when_idle, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="pdfko proxy", lifespan=_lifespan)
+
+
+@app.middleware("http")
+async def _mark_in_use(request: Request, call_next):
+    """**모든** 요청이 '쓰이는 중'이다 — 번역 요청만이 아니다.
+
+    재사용 경로는 `/health` 를 두드려 같은 규칙인지 확인하고 채택한다.
+    그 두드림이 시계를 갱신하지 않으면, 29분 놀던 미들웨어를 채택한 직후
+    감시가 깨어나 죽인다. 채택과 첫 번역 사이에는 엔진 기동과 레이아웃 모델
+    적재가 있어 1분이 넘게 걸린다.
+
+    들어올 때와 **나갈 때** 모두 찍고, 처리 중인 수를 센다. 한 요청이 30분을
+    넘어도 그건 노는 것이 아니다.
+    """
+    global _LAST_SEEN, _INFLIGHT
+    _LAST_SEEN = time.time()
+    _INFLIGHT += 1
+    try:
+        return await call_next(request)
+    finally:
+        _INFLIGHT -= 1
+        _LAST_SEEN = time.time()
 client = httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=10.0))
 
 
